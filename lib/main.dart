@@ -306,15 +306,10 @@ class _VoidFocusSessionScreenState extends State<VoidFocusSessionScreen> {
   static const int _totalSeconds = 25 * 60;
 
   int _remainingSeconds = _totalSeconds;
+  bool _isRunning = false;
   bool _isPaused = false;
   bool _isCompleted = false;
   Timer? _timer;
-
-  @override
-  void initState() {
-    super.initState();
-    _startTimer();
-  }
 
   @override
   void dispose() {
@@ -328,7 +323,7 @@ class _VoidFocusSessionScreenState extends State<VoidFocusSessionScreen> {
   }
 
   void _tick() {
-    if (_isPaused || _isCompleted) return;
+    if (!_isRunning || _isPaused || _isCompleted) return;
     if (_remainingSeconds <= 1) {
       setState(() => _remainingSeconds = 0);
       _completeSession();
@@ -339,23 +334,39 @@ class _VoidFocusSessionScreenState extends State<VoidFocusSessionScreen> {
 
   void _completeSession() {
     _timer?.cancel();
-    setState(() => _isCompleted = true);
+    setState(() {
+      _isRunning = false;
+      _isPaused = false;
+      _isCompleted = true;
+    });
     HapticFeedback.mediumImpact();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _showCompletionDialog();
     });
   }
 
+  void _startSession() {
+    if (_isRunning || _isCompleted) return;
+    HapticFeedback.lightImpact();
+    setState(() => _isRunning = true);
+    _startTimer();
+  }
+
   void _togglePause() {
-    if (_isCompleted) return;
+    if (!_isRunning || _isCompleted) return;
     HapticFeedback.lightImpact();
     setState(() => _isPaused = !_isPaused);
   }
 
-  void _finishSession() {
+  void _resetSession() {
     HapticFeedback.lightImpact();
     _timer?.cancel();
-    Navigator.pop(context);
+    setState(() {
+      _remainingSeconds = _totalSeconds;
+      _isRunning = false;
+      _isPaused = false;
+      _isCompleted = false;
+    });
   }
 
   Future<void> _showCompletionDialog() async {
@@ -370,23 +381,18 @@ class _VoidFocusSessionScreenState extends State<VoidFocusSessionScreen> {
         ),
         title: Text(
           'Сессия завершена',
+          textAlign: TextAlign.center,
           style: TextStyle(
             color: Colors.white.withValues(alpha: 0.95),
             fontWeight: FontWeight.w500,
           ),
         ),
-        content: Text(
-          'Отличная работа! Вы завершили сессию глубокого фокуса.',
-          style: TextStyle(
-            color: Colors.white.withValues(alpha: 0.6),
-            height: 1.5,
-          ),
-        ),
+        actionsAlignment: MainAxisAlignment.center,
         actions: [
           TextButton(
             onPressed: () {
               Navigator.pop(dialogContext);
-              Navigator.pop(context);
+              _resetSession();
             },
             child: const Text(
               'Готово',
@@ -497,10 +503,39 @@ class _VoidFocusSessionScreenState extends State<VoidFocusSessionScreen> {
                   Row(
                     children: [
                       Expanded(
+                        child: FilledButton(
+                          onPressed: _isRunning || _isCompleted ? null : _startSession,
+                          style: FilledButton.styleFrom(
+                            backgroundColor: kVoidAccent,
+                            disabledBackgroundColor:
+                                kVoidAccent.withValues(alpha: 0.25),
+                            foregroundColor: Colors.white,
+                            disabledForegroundColor:
+                                Colors.white.withValues(alpha: 0.4),
+                            elevation: 0,
+                            minimumSize: const Size.fromHeight(52),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          child: const Text(
+                            'Старт',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
                         child: OutlinedButton(
-                          onPressed: _isCompleted ? null : _togglePause,
+                          onPressed:
+                              _isRunning && !_isCompleted ? _togglePause : null,
                           style: OutlinedButton.styleFrom(
                             foregroundColor: Colors.white.withValues(alpha: 0.85),
+                            disabledForegroundColor:
+                                Colors.white.withValues(alpha: 0.25),
                             side: BorderSide(
                               color: kVoidAccent.withValues(alpha: 0.4),
                             ),
@@ -518,10 +553,10 @@ class _VoidFocusSessionScreenState extends State<VoidFocusSessionScreen> {
                           ),
                         ),
                       ),
-                      const SizedBox(width: 12),
+                      const SizedBox(width: 10),
                       Expanded(
                         child: OutlinedButton(
-                          onPressed: _finishSession,
+                          onPressed: _resetSession,
                           style: OutlinedButton.styleFrom(
                             foregroundColor: Colors.white.withValues(alpha: 0.6),
                             side: BorderSide(
@@ -533,7 +568,7 @@ class _VoidFocusSessionScreenState extends State<VoidFocusSessionScreen> {
                             ),
                           ),
                           child: const Text(
-                            'Завершить',
+                            'Сброс',
                             style: TextStyle(
                               fontSize: 15,
                               fontWeight: FontWeight.w500,

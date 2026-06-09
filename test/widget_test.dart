@@ -36,13 +36,14 @@ void main() {
 
     expect(find.text('Глубокий фокус'), findsOneWidget);
     expect(find.text('25:00'), findsOneWidget);
+    expect(find.text('Старт'), findsOneWidget);
     expect(find.text('Пауза'), findsOneWidget);
-    expect(find.text('Завершить'), findsOneWidget);
+    expect(find.text('Сброс'), findsOneWidget);
     expect(find.text('Сессий сегодня'), findsOneWidget);
     expect(find.text('Отвлечений'), findsOneWidget);
   });
 
-  testWidgets('countdown ticks and pause works', (WidgetTester tester) async {
+  testWidgets('countdown starts on Старт and pause works', (WidgetTester tester) async {
     await tester.pumpWidget(const VoidApp());
     await tester.pumpAndSettle();
 
@@ -52,6 +53,11 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.pump(const Duration(seconds: 3));
+    expect(find.text('25:00'), findsOneWidget);
+
+    await tester.tap(find.text('Старт'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 3));
     expect(find.text('24:57'), findsOneWidget);
 
     await tester.tap(find.text('Пауза'));
@@ -60,5 +66,23 @@ void main() {
 
     await tester.pump(const Duration(seconds: 5));
     expect(find.text('24:57'), findsOneWidget);
+  });
+
+  testWidgets('Сброс restores timer to 25:00', (WidgetTester tester) async {
+    await tester.pumpWidget(const VoidApp());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Начать фокус'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Начать сессию'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Старт'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 5));
+    expect(find.text('24:55'), findsOneWidget);
+
+    await tester.tap(find.text('Сброс'));
+    await tester.pumpAndSettle();
+    expect(find.text('25:00'), findsOneWidget);
   });
 }
