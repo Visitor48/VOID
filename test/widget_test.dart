@@ -70,6 +70,21 @@ void main() {
     );
   });
 
+  test('xp and level follow focus minute rules', () {
+    expect(computeSessionXp(60, 0), 1);
+    expect(computeSessionXp(21, 0), 0);
+    expect(computeTotalXp(12000), 200);
+    expect(computeLevel(0), 1);
+    expect(computeLevel(99), 1);
+    expect(computeLevel(100), 2);
+    expect(computeLevel(250), 3);
+    expect(computeXpInCurrentLevel(250), 50);
+    expect(formatLevelXpProgress(50), '50 / 100 XP');
+    expect(StatsService.instance.data.totalXp, 200);
+    expect(StatsService.instance.data.level, 3);
+    expect(StatsService.instance.data.xpInCurrentLevel, 0);
+  });
+
   test('computeFocusScore subtracts one point per distraction', () {
     expect(computeFocusScore(0), 100);
     expect(computeFocusScore(3), 97);
@@ -77,8 +92,25 @@ void main() {
   });
 
   test('formatDailyGoalProgress formats minutes', () {
-    expect(formatDailyGoalProgress(54, 60), '54 / 60 минут');
-    expect(formatDailyGoalProgress(0, 60), '0 / 60 минут');
+    expect(formatDailyGoalProgress(54, 60), '54м / 60м');
+    expect(formatDailyGoalProgress(0, 60), '0м / 60м');
+  });
+
+  test('today focus resets automatically for a new day', () async {
+    final yesterday = DateTime.now().subtract(const Duration(days: 1));
+    final yesterdayKey =
+        '${yesterday.year.toString().padLeft(4, '0')}-'
+        '${yesterday.month.toString().padLeft(2, '0')}-'
+        '${yesterday.day.toString().padLeft(2, '0')}';
+    SharedPreferences.setMockInitialValues({
+      'daily_activity': '{"$yesterdayKey":3600}',
+      'focus_data_uses_seconds': true,
+    });
+    await StatsService.instance.initialize(force: true);
+    await StatsService.instance.load(force: true);
+
+    expect(StatsService.instance.data.todayFocusMinutes, 0);
+    expect(StatsService.instance.data.dailyGoalMinutes, 60);
   });
 
   test('formatFocusDuration formats seconds correctly', () {
@@ -111,11 +143,31 @@ void main() {
     await tester.tap(find.text('Начать фокус'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Цель дня'), findsOneWidget);
-    expect(find.text('54 / 60 минут'), findsOneWidget);
+    expect(find.text('Сегодня:'), findsOneWidget);
+    expect(find.text('54м / 60м'), findsOneWidget);
     expect(StatsService.instance.data.dailyGoalMinutes, 60);
     expect(StatsService.instance.data.todayFocusMinutes, 54);
     expect(StatsService.instance.data.dailyGoalProgress, closeTo(0.9, 0.01));
+  });
+
+  testWidgets('daily goal shows completed state at 60 minutes', (
+    WidgetTester tester,
+  ) async {
+    final todayKey = _todayActivityKey();
+    SharedPreferences.setMockInitialValues({
+      'daily_activity': '{"$todayKey":3600}',
+      'focus_data_uses_seconds': true,
+    });
+    await StatsService.instance.initialize(force: true);
+    await StatsService.instance.load(force: true);
+
+    await tester.pumpWidget(const VoidApp());
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Начать фокус'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('60м / 60м'), findsOneWidget);
+    expect(find.text('Выполнено'), findsOneWidget);
   });
 
   testWidgets('Начать фокус navigates to home screen', (WidgetTester tester) async {
@@ -162,6 +214,10 @@ void main() {
     await tester.tap(find.text('Профиль'));
     await tester.pumpAndSettle();
     expect(find.text('Пользователь VOID'), findsOneWidget);
+    expect(find.text('Уровень'), findsOneWidget);
+    expect(find.text('3'), findsWidgets);
+    expect(find.text('200 XP'), findsOneWidget);
+    expect(find.text('0 / 100 XP'), findsOneWidget);
     expect(find.text('8'), findsWidgets);
     expect(find.text('3ч 20м'), findsWidgets);
     expect(find.text('История сессий'), findsOneWidget);
@@ -304,7 +360,7 @@ void main() {
     expect(find.text('Отвлечения'), findsOneWidget);
     expect(find.text('Фокус-счёт'), findsWidgets);
     expect(find.text('XP'), findsOneWidget);
-    expect(find.text('+4'), findsOneWidget);
+    expect(find.text('+0'), findsOneWidget);
     expect(find.text('100'), findsWidgets);
     expect(StatsService.instance.data.sessionHistory.length, 1);
     expect(StatsService.instance.data.sessionHistory.first.focusSeconds, 21);
@@ -433,7 +489,7 @@ void main() {
     expect(find.text('Отвлечения'), findsOneWidget);
     expect(find.text('Получено XP'), findsOneWidget);
     expect(find.text('1м'), findsWidgets);
-    expect(find.text('+10'), findsOneWidget);
+    expect(find.text('+1'), findsOneWidget);
 
     expect(StatsService.instance.data.completedSessions, 1);
     expect(StatsService.instance.data.totalFocusSeconds, 60);

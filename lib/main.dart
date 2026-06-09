@@ -194,6 +194,14 @@ class StatsData {
   int get unlockedAchievementsCount =>
       achievements.where((achievement) => achievement.isUnlocked).length;
 
+  int get totalXp => computeTotalXp(totalFocusSeconds);
+
+  int get level => computeLevel(totalXp);
+
+  int get xpInCurrentLevel => computeXpInCurrentLevel(totalXp);
+
+  double get levelProgress => computeLevelProgress(totalXp);
+
   static const empty = StatsData(
     completedSessions: 0,
     totalFocusSeconds: 0,
@@ -212,7 +220,7 @@ class StatsData {
 }
 
 String formatDailyGoalProgress(int todayMinutes, int goalMinutes) {
-  return '$todayMinutes / $goalMinutes минут';
+  return '${todayMinutes}м / ${goalMinutes}м';
 }
 
 String formatAverageDistractions(double value) {
@@ -253,9 +261,19 @@ int computeActualFocusSeconds({
 }
 
 int computeSessionXp(int elapsedSeconds, int distractions) {
-  final baseXp = (elapsedSeconds / 60 * 10).round();
-  return (baseXp - distractions * 5).clamp(0, 99999);
+  return elapsedSeconds ~/ 60;
 }
+
+int computeTotalXp(int totalFocusSeconds) => totalFocusSeconds ~/ 60;
+
+int computeLevel(int totalXp) => 1 + totalXp ~/ 100;
+
+int computeXpInCurrentLevel(int totalXp) => totalXp % 100;
+
+double computeLevelProgress(int totalXp) =>
+    computeXpInCurrentLevel(totalXp) / 100;
+
+String formatLevelXpProgress(int xpInLevel) => '$xpInLevel / 100 XP';
 
 int computeFocusScore(int distractions) {
   return (100 - distractions).clamp(0, 100);
@@ -831,6 +849,9 @@ class StatsService extends ChangeNotifier {
       'todayFocusSeconds': stats.todayFocusSeconds,
       'dailyGoalMinutes': stats.dailyGoalMinutes,
       'averageFocusScore': stats.averageFocusScore,
+      'totalXp': stats.totalXp,
+      'level': stats.level,
+      'xpInCurrentLevel': stats.xpInCurrentLevel,
       'unlockedAchievementsCount': stats.unlockedAchievementsCount,
       'last7Days': stats.last7Days
           .map(
@@ -1692,6 +1713,13 @@ class _VoidProfileTabState extends State<VoidProfileTab> {
                       ),
                     ),
                     SizedBox(height: m.gapL),
+                    VoidLevelCard(
+                      level: stats.level,
+                      totalXp: stats.totalXp,
+                      xpInLevel: stats.xpInCurrentLevel,
+                      progress: stats.levelProgress,
+                    ),
+                    SizedBox(height: m.gapM),
                     VoidStatCard(
                       label: 'Всего сессий',
                       value: '${stats.completedSessions}',
@@ -3459,7 +3487,7 @@ class VoidAchievementCard extends StatelessWidget {
   }
 }
 
-class VoidDailyGoalCard extends StatelessWidget {
+class VoidDailyGoalCard extends StatefulWidget {
   const VoidDailyGoalCard({
     super.key,
     required this.todayMinutes,
@@ -3472,28 +3500,296 @@ class VoidDailyGoalCard extends StatelessWidget {
   final double progress;
 
   @override
-  Widget build(BuildContext context) {
-    final completed = todayMinutes >= goalMinutes;
+  State<VoidDailyGoalCard> createState() => _VoidDailyGoalCardState();
+}
 
+class _VoidDailyGoalCardState extends State<VoidDailyGoalCard>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _celebrationController;
+  late final Animation<double> _scaleAnimation;
+  late final Animation<double> _glowAnimation;
+  late final Animation<double> _sparkleAnimation;
+  bool _wasCompleted = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _wasCompleted = widget.todayMinutes >= widget.goalMinutes;
+    _celebrationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    );
+    _scaleAnimation = TweenSequence<double>([
+      TweenSequenceItem(
+        tween: Tween(begin: 1.0, end: 1.04)
+            .chain(CurveTween(curve: Curves.easeOut)),
+        weight: 25,
+      ),
+      TweenSequenceItem(
+        tween: Tween(begin: 1.04, end: 1.0)
+            .chain(CurveTween(curve: Curves.easeInOut)),
+        weight: 75,
+      ),
+    ]).animate(_celebrationController);
+    _glowAnimation = TweenSequence<double>([
+      TweenSequenceItem(
+        tween: Tween<double>(begin: 0, end: 1)
+            .chain(CurveTween(curve: Curves.easeOut)),
+        weight: 30,
+      ),
+      TweenSequenceItem(
+        tween: Tween<double>(begin: 1, end: 0.35)
+            .chain(CurveTween(curve: Curves.easeIn)),
+        weight: 70,
+      ),
+    ]).animate(_celebrationController);
+    _sparkleAnimation = Tween<double>(begin: 0, end: 1).animate(
+      CurvedAnimation(
+        parent: _celebrationController,
+        curve: const Interval(0, 0.65, curve: Curves.easeOut),
+      ),
+    );
+  }
+
+  @override
+  void didUpdateWidget(VoidDailyGoalCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final completed = widget.todayMinutes >= widget.goalMinutes;
+    if (completed && !_wasCompleted) {
+      _celebrationController.forward(from: 0);
+    }
+    _wasCompleted = completed;
+  }
+
+  @override
+  void dispose() {
+    _celebrationController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final completed = widget.todayMinutes >= widget.goalMinutes;
+    final glowBoost = _glowAnimation.value;
+
+    return AnimatedBuilder(
+      animation: _celebrationController,
+      builder: (context, child) {
+        return Transform.scale(
+          scale: _scaleAnimation.value,
+          child: child,
+        );
+      },
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.04),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: kVoidAccent.withValues(
+                  alpha: completed
+                      ? 0.45 + glowBoost * 0.25
+                      : 0.22 + glowBoost * 0.15,
+                ),
+              ),
+              boxShadow: [
+                if (completed || glowBoost > 0)
+                  BoxShadow(
+                    color: kVoidAccent
+                        .withValues(alpha: 0.12 + glowBoost * 0.28),
+                    blurRadius: 14 + glowBoost * 18,
+                    spreadRadius: glowBoost * 2,
+                  ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Сегодня:',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.white.withValues(alpha: 0.45),
+                        ),
+                      ),
+                    ),
+                    if (completed)
+                      Text(
+                        'Выполнено',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                          color: kVoidAccent.withValues(
+                            alpha: 0.9 + glowBoost * 0.1,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  formatDailyGoalProgress(
+                    widget.todayMinutes,
+                    widget.goalMinutes,
+                  ),
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w300,
+                    color: Colors.white.withValues(alpha: 0.95),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: SizedBox(
+                    height: 8,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        ColoredBox(
+                          color: kVoidAccent.withValues(alpha: 0.12),
+                        ),
+                        FractionallySizedBox(
+                          alignment: Alignment.centerLeft,
+                          widthFactor: widget.progress,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: [
+                                  kVoidAccent.withValues(
+                                    alpha: 0.75 + glowBoost * 0.25,
+                                  ),
+                                  kVoidAccent,
+                                ],
+                              ),
+                              boxShadow: widget.progress > 0
+                                  ? [
+                                      BoxShadow(
+                                        color: kVoidAccent.withValues(
+                                          alpha: 0.35 + glowBoost * 0.45,
+                                        ),
+                                        blurRadius: 8 + glowBoost * 12,
+                                      ),
+                                    ]
+                                  : null,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (_sparkleAnimation.value > 0)
+            _DailyGoalSparkles(animation: _sparkleAnimation.value),
+        ],
+      ),
+    );
+  }
+}
+
+class _DailyGoalSparkles extends StatelessWidget {
+  const _DailyGoalSparkles({required this.animation});
+
+  final double animation;
+
+  static const _offsets = [
+    Offset(-0.42, -0.55),
+    Offset(0.48, -0.62),
+    Offset(-0.55, 0.35),
+    Offset(0.52, 0.42),
+    Offset(0, -0.75),
+    Offset(0.35, 0.55),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final center = Offset(
+              constraints.maxWidth / 2,
+              constraints.maxHeight / 2,
+            );
+            final radius = constraints.maxWidth * 0.38 * animation;
+
+            return Stack(
+              clipBehavior: Clip.none,
+              children: [
+                for (var i = 0; i < _offsets.length; i++)
+                  Positioned(
+                    left: center.dx +
+                        _offsets[i].dx * radius -
+                        3 * (1 - animation),
+                    top: center.dy +
+                        _offsets[i].dy * radius -
+                        3 * (1 - animation),
+                    child: Opacity(
+                      opacity: (1 - animation).clamp(0.0, 1.0),
+                      child: Container(
+                        width: 6,
+                        height: 6,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: kVoidAccent.withValues(alpha: 0.85),
+                          boxShadow: [
+                            BoxShadow(
+                              color: kVoidAccent.withValues(alpha: 0.5),
+                              blurRadius: 6,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class VoidLevelCard extends StatelessWidget {
+  const VoidLevelCard({
+    super.key,
+    required this.level,
+    required this.totalXp,
+    required this.xpInLevel,
+    required this.progress,
+  });
+
+  final int level;
+  final int totalXp;
+  final int xpInLevel;
+  final double progress;
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.04),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: completed
-              ? kVoidAccent.withValues(alpha: 0.45)
-              : kVoidAccent.withValues(alpha: 0.22),
-        ),
-        boxShadow: completed
-            ? [
-                BoxShadow(
-                  color: kVoidAccent.withValues(alpha: 0.12),
-                  blurRadius: 14,
-                ),
-              ]
-            : null,
+        border: Border.all(color: kVoidAccent.withValues(alpha: 0.28)),
+        boxShadow: [
+          BoxShadow(
+            color: kVoidAccent.withValues(alpha: 0.1),
+            blurRadius: 16,
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -3502,29 +3798,28 @@ class VoidDailyGoalCard extends StatelessWidget {
             children: [
               Expanded(
                 child: Text(
-                  'Цель дня',
+                  'Уровень',
                   style: TextStyle(
                     fontSize: 12,
                     color: Colors.white.withValues(alpha: 0.45),
                   ),
                 ),
               ),
-              if (completed)
-                Text(
-                  'Выполнено',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w500,
-                    color: kVoidAccent.withValues(alpha: 0.9),
-                  ),
+              Text(
+                '$totalXp XP',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                  color: kVoidAccent.withValues(alpha: 0.75),
                 ),
+              ),
             ],
           ),
           const SizedBox(height: 8),
           Text(
-            formatDailyGoalProgress(todayMinutes, goalMinutes),
+            '$level',
             style: TextStyle(
-              fontSize: 22,
+              fontSize: 28,
               fontWeight: FontWeight.w300,
               color: Colors.white.withValues(alpha: 0.95),
             ),
@@ -3542,7 +3837,7 @@ class VoidDailyGoalCard extends StatelessWidget {
                   ),
                   FractionallySizedBox(
                     alignment: Alignment.centerLeft,
-                    widthFactor: progress,
+                    widthFactor: progress.clamp(0.0, 1.0),
                     child: DecoratedBox(
                       decoration: BoxDecoration(
                         gradient: LinearGradient(
@@ -3564,6 +3859,14 @@ class VoidDailyGoalCard extends StatelessWidget {
                   ),
                 ],
               ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            formatLevelXpProgress(xpInLevel),
+            style: TextStyle(
+              fontSize: 13,
+              color: Colors.white.withValues(alpha: 0.55),
             ),
           ),
         ],
