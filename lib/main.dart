@@ -17,6 +17,7 @@ const _kTotalFocusSeconds = 'totalFocusSeconds';
 const _kTotalFocusMinutes = 'totalFocusMinutes';
 const _kFocusDataUsesSeconds = 'focus_data_uses_seconds';
 const _kCurrentStreak = 'currentStreak';
+const _kBestStreak = 'bestStreak';
 const _kLastActiveDate = 'last_active_date';
 const _kDailyActivity = 'daily_activity';
 const _kTodaySessionsDate = 'todaySessionsDate';
@@ -122,6 +123,7 @@ class VoidDayActivity {
     this.sessionsCount = 0,
     this.distractions = 0,
     this.averageFocusScore = 0,
+    this.xpEarned = 0,
   });
 
   final DateTime date;
@@ -129,10 +131,11 @@ class VoidDayActivity {
   final int sessionsCount;
   final int distractions;
   final double averageFocusScore;
+  final int xpEarned;
 
   String get dayLabel => _kDayLabels[date.weekday - 1];
 
-  bool get hasActivity => focusSeconds > 0;
+  bool get hasActivity => focusSeconds > 0 || sessionsCount > 0;
 
   VoidFocusDayStatus status(int goalMinutes) => resolveFocusDayStatus(
         focusSeconds: focusSeconds,
@@ -179,6 +182,55 @@ int computeLongestActiveStreak(List<VoidDayActivity> days) {
   return longest;
 }
 
+DateTime normalizeActivityDate(DateTime date) =>
+    DateTime(date.year, date.month, date.day);
+
+Set<DateTime> activeDatesFromActivity(Map<String, int> activity) {
+  return activity.entries
+      .where((entry) => entry.value > 0)
+      .map((entry) => normalizeActivityDate(_parseDateKey(entry.key)))
+      .toSet();
+}
+
+int computeCurrentStreakFromActivity(Map<String, int> activity) {
+  final activeDates = activeDatesFromActivity(activity);
+  if (activeDates.isEmpty) return 0;
+
+  final today = normalizeActivityDate(DateTime.now());
+  final yesterday = today.subtract(const Duration(days: 1));
+
+  if (!activeDates.contains(today) && !activeDates.contains(yesterday)) {
+    return 0;
+  }
+
+  var cursor = activeDates.contains(today) ? today : yesterday;
+  var streak = 0;
+  while (activeDates.contains(cursor)) {
+    streak++;
+    cursor = cursor.subtract(const Duration(days: 1));
+  }
+  return streak;
+}
+
+int computeBestStreakFromActivity(Map<String, int> activity) {
+  final dates = activeDatesFromActivity(activity).toList()..sort();
+  if (dates.isEmpty) return 0;
+  if (dates.length == 1) return 1;
+
+  var best = 1;
+  var current = 1;
+  for (var index = 1; index < dates.length; index++) {
+    final gap = dates[index].difference(dates[index - 1]).inDays;
+    if (gap == 1) {
+      current++;
+      if (current > best) best = current;
+    } else {
+      current = 1;
+    }
+  }
+  return best;
+}
+
 Map<String, VoidDayActivity> aggregateDayActivityFromSessions(
   List<VoidSessionRecord> history,
 ) {
@@ -194,6 +246,7 @@ Map<String, VoidDayActivity> aggregateDayActivityFromSessions(
       focusSeconds: aggregate.focusSeconds + session.focusSeconds,
       distractions: aggregate.distractions + session.distractions,
       focusScoreSum: aggregate.focusScoreSum + session.focusScore,
+      xpEarned: aggregate.xpEarned + session.xp,
     );
   }
 
@@ -208,6 +261,7 @@ Map<String, VoidDayActivity> aggregateDayActivityFromSessions(
         averageFocusScore: aggregate.sessionsCount == 0
             ? 0
             : aggregate.focusScoreSum / aggregate.sessionsCount,
+        xpEarned: aggregate.xpEarned,
       ),
     ),
   );
@@ -231,24 +285,28 @@ class _VoidDaySessionAggregate {
     this.focusSeconds = 0,
     this.distractions = 0,
     this.focusScoreSum = 0,
+    this.xpEarned = 0,
   });
 
   final int sessionsCount;
   final int focusSeconds;
   final int distractions;
   final int focusScoreSum;
+  final int xpEarned;
 
   _VoidDaySessionAggregate copyWith({
     int? sessionsCount,
     int? focusSeconds,
     int? distractions,
     int? focusScoreSum,
+    int? xpEarned,
   }) {
     return _VoidDaySessionAggregate(
       sessionsCount: sessionsCount ?? this.sessionsCount,
       focusSeconds: focusSeconds ?? this.focusSeconds,
       distractions: distractions ?? this.distractions,
       focusScoreSum: focusScoreSum ?? this.focusScoreSum,
+      xpEarned: xpEarned ?? this.xpEarned,
     );
   }
 }
@@ -325,8 +383,8 @@ List<VoidAchievement> buildAchievements({
     ),
     VoidAchievement(
       id: 'daily_goal',
-      title: 'Цель дня',
-      description: 'Выполните дневную цель фокуса',
+      title: 'Цель дня выполнена',
+      description: 'Накопите 60 минут фокуса за день',
       icon: Icons.track_changes_rounded,
       isUnlocked: dailyGoalAchieved,
     ),
@@ -338,6 +396,7 @@ class StatsData {
     required this.completedSessions,
     required this.totalFocusSeconds,
     required this.currentStreak,
+    required this.bestStreak,
     required this.todaySessions,
     required this.distractions,
     required this.averageDistractionsPerSession,
@@ -354,6 +413,7 @@ class StatsData {
   final int completedSessions;
   final int totalFocusSeconds;
   final int currentStreak;
+  final int bestStreak;
   final int todaySessions;
   final int distractions;
   final double averageDistractionsPerSession;
@@ -390,6 +450,7 @@ class StatsData {
     completedSessions: 0,
     totalFocusSeconds: 0,
     currentStreak: 0,
+    bestStreak: 0,
     todaySessions: 0,
     distractions: 0,
     averageDistractionsPerSession: 0,
@@ -404,10 +465,26 @@ class StatsData {
   );
 }
 
-String formatDailyGoalProgress(int todayFocusSeconds, int goalMinutes) {
-  final todayMinutes = todayFocusSeconds ~/ 60;
-  return '$todayMinutes / $goalMinutes минут';
+String formatDailyGoalTime(int seconds) {
+  if (seconds <= 0) return '0с';
+  final minutes = seconds ~/ 60;
+  final remainingSeconds = seconds % 60;
+  if (minutes > 0 && remainingSeconds > 0) {
+    return '${minutes}м ${remainingSeconds}с';
+  }
+  if (minutes > 0) return '${minutes}м';
+  return '${remainingSeconds}с';
 }
+
+String formatDailyGoalTarget(int goalMinutes) => '${goalMinutes}м';
+
+String formatDailyGoalProgress(int todayFocusSeconds, int goalMinutes) {
+  return '${formatDailyGoalTime(todayFocusSeconds)} / '
+      '${formatDailyGoalTarget(goalMinutes)}';
+}
+
+int formatDailyGoalPercent(double progress) =>
+    (progress * 100).round().clamp(0, 100);
 
 String formatAverageDistractions(double value) {
   if (value <= 0) return '0';
@@ -608,6 +685,7 @@ class StatsService extends ChangeNotifier {
         completedSessions: 0,
         totalFocusSeconds: 0,
         currentStreak: 0,
+        bestStreak: 0,
         todaySessions: 0,
         distractions: 0,
         averageDistractionsPerSession: 0,
@@ -824,12 +902,19 @@ class StatsService extends ChangeNotifier {
       final key = _dateKey(date);
       final sessionDay = sessionDays[key];
       final focusSeconds = activity[key] ?? sessionDay?.focusSeconds ?? 0;
+      final sessionsCount = sessionDay?.sessionsCount ?? 0;
+      final xpEarned = sessionDay != null && sessionsCount > 0
+          ? sessionDay.xpEarned
+          : focusSeconds > 0
+              ? focusSeconds ~/ 60
+              : 0;
       return VoidDayActivity(
         date: date,
         focusSeconds: focusSeconds,
-        sessionsCount: sessionDay?.sessionsCount ?? 0,
+        sessionsCount: sessionsCount,
         distractions: sessionDay?.distractions ?? 0,
         averageFocusScore: sessionDay?.averageFocusScore ?? 0,
+        xpEarned: xpEarned,
       );
     });
   }
@@ -907,6 +992,34 @@ class StatsService extends ChangeNotifier {
         0;
   }
 
+  int _readBestStreak(SharedPreferences prefs) {
+    return prefs.getInt(_kBestStreak) ?? 0;
+  }
+
+  static Future<({int current, int best})> _syncStreakFromActivity(
+    SharedPreferences prefs,
+    Map<String, int> activity,
+  ) async {
+    final current = computeCurrentStreakFromActivity(activity);
+    final computedBest = computeBestStreakFromActivity(activity);
+    final storedBest = prefs.getInt(_kBestStreak) ?? 0;
+    final best = computedBest > storedBest ? computedBest : storedBest;
+
+    if (prefs.getInt(_kCurrentStreak) != current) {
+      await prefs.setInt(_kCurrentStreak, current);
+    }
+    if (best != storedBest) {
+      await prefs.setInt(_kBestStreak, best);
+    }
+
+    final today = _dateKey(DateTime.now());
+    if (activity[today] != null && activity[today]! > 0) {
+      await prefs.setString(_kLastActiveDate, today);
+    }
+
+    return (current: current, best: best);
+  }
+
   int _readTodayFocusSeconds(
     SharedPreferences prefs,
     Map<String, int> activity,
@@ -958,7 +1071,9 @@ class StatsService extends ChangeNotifier {
       final activity = _parseActivity(prefs.getString(_kDailyActivity));
       final completedSessions = _readCompletedSessions(prefs);
       final totalFocusSeconds = _readTotalFocusSeconds(prefs);
-      final currentStreak = _readCurrentStreak(prefs);
+      final streak = await _syncStreakFromActivity(prefs, activity);
+      final currentStreak = streak.current;
+      final bestStreak = streak.best;
       final todaySessions = _readTodaySessions(prefs);
       final distractions = prefs.getInt(_kTotalDistractions) ?? 0;
       final sessionDistractionsHistory =
@@ -991,6 +1106,7 @@ class StatsService extends ChangeNotifier {
         completedSessions: completedSessions,
         totalFocusSeconds: totalFocusSeconds,
         currentStreak: currentStreak,
+        bestStreak: bestStreak,
         todaySessions: todaySessions,
         distractions: distractions,
         averageDistractionsPerSession: averageDistractionsPerSession,
@@ -1034,16 +1150,6 @@ class StatsService extends ChangeNotifier {
       final activity = _parseActivity(prefs.getString(_kDailyActivity));
       activity[today] = (activity[today] ?? 0) + focusSeconds;
 
-      final lastActive = prefs.getString(_kLastActiveDate);
-      int streak = _readCurrentStreak(prefs);
-      if (lastActive == today) {
-        streak = streak == 0 ? 1 : streak;
-      } else if (lastActive == yesterday) {
-        streak += 1;
-      } else {
-        streak = 1;
-      }
-
       final todaySessions = _readTodaySessions(prefs) + 1;
       final totalDistractions =
           (prefs.getInt(_kTotalDistractions) ?? 0) + sessionDistractions;
@@ -1054,9 +1160,8 @@ class StatsService extends ChangeNotifier {
 
       await prefs.setInt(_kCompletedSessions, completedSessions);
       await prefs.setInt(_kTotalFocusSeconds, totalFocusSeconds);
-      await prefs.setInt(_kCurrentStreak, streak);
-      await prefs.setString(_kLastActiveDate, today);
       await prefs.setString(_kDailyActivity, jsonEncode(activity));
+      await _syncStreakFromActivity(prefs, activity);
       await prefs.setString(_kTodaySessionsDate, today);
       await prefs.setInt(_kTodaySessions, todaySessions);
       await prefs.setInt(_kTotalDistractions, totalDistractions);
@@ -1103,6 +1208,7 @@ class StatsService extends ChangeNotifier {
       await prefs.setInt(_kCompletedSessions, 0);
       await prefs.setInt(_kTotalFocusSeconds, 0);
       await prefs.setInt(_kCurrentStreak, 0);
+      await prefs.setInt(_kBestStreak, 0);
       await prefs.remove(_kLastActiveDate);
       await prefs.setString(_kDailyActivity, jsonEncode({}));
       await prefs.remove(_kTodaySessionsDate);
@@ -1153,6 +1259,7 @@ class StatsService extends ChangeNotifier {
       'completedSessions': stats.completedSessions,
       'totalFocusSeconds': stats.totalFocusSeconds,
       'currentStreak': stats.currentStreak,
+      'bestStreak': stats.bestStreak,
       'todaySessions': stats.todaySessions,
       'totalDistractions': stats.distractions,
       'averageDistractionsPerSession': stats.averageDistractionsPerSession,
@@ -1669,9 +1776,9 @@ class _VoidHomeTabState extends State<VoidHomeTab> {
                             ),
                           ),
                           SizedBox(height: m.gapM),
-                          VoidStatCard(
-                            label: 'Серия дней',
-                            value: '${analytics.currentStreak}',
+                          VoidStreakCard(
+                            currentStreak: analytics.currentStreak,
+                            bestStreak: analytics.bestStreak,
                           ),
                           SizedBox(height: m.gapM),
                         ],
@@ -1778,9 +1885,9 @@ class _VoidAnalyticsTabState extends State<VoidAnalyticsTab> {
                       value: formatFocusDuration(analytics.totalFocusSeconds),
                     ),
                     SizedBox(height: m.gapM),
-                    VoidStatCard(
-                      label: 'Текущая серия дней',
-                      value: '${analytics.currentStreak}',
+                    VoidStreakCard(
+                      currentStreak: analytics.currentStreak,
+                      bestStreak: analytics.bestStreak,
                     ),
                     SizedBox(height: m.gapM),
                     VoidStatCard(
@@ -2206,27 +2313,59 @@ void showVoidDayDetailSheet(
                 ),
               ),
               const SizedBox(height: 18),
-              _VoidDayDetailMetric(
-                label: 'Время фокуса',
-                value: formatFocusDuration(day.focusSeconds),
-              ),
-              const SizedBox(height: 10),
-              _VoidDayDetailMetric(
-                label: 'Сессий завершено',
-                value: '${day.sessionsCount}',
-              ),
-              const SizedBox(height: 10),
-              _VoidDayDetailMetric(
-                label: 'Фокус-счёт',
-                value: day.sessionsCount > 0
-                    ? formatFocusScore(day.averageFocusScore)
-                    : '—',
-              ),
-              const SizedBox(height: 10),
-              _VoidDayDetailMetric(
-                label: 'Отвлечения',
-                value: '${day.distractions}',
-              ),
+              if (!day.hasActivity) ...[
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 28,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.04),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: kVoidAccent.withValues(alpha: 0.18),
+                    ),
+                  ),
+                  child: Text(
+                    'В этот день не было фокус-сессий',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 13,
+                      height: 1.45,
+                      color: Colors.white.withValues(alpha: 0.55),
+                    ),
+                  ),
+                ),
+              ] else ...[
+                _VoidDayDetailMetric(
+                  label: 'Всего фокуса',
+                  value: formatFocusDuration(day.focusSeconds),
+                ),
+                const SizedBox(height: 10),
+                _VoidDayDetailMetric(
+                  label: 'Сессий завершено',
+                  value: '${day.sessionsCount}',
+                ),
+                const SizedBox(height: 10),
+                _VoidDayDetailMetric(
+                  label: 'Средний фокус-счёт',
+                  value: day.sessionsCount > 0
+                      ? formatFocusScore(day.averageFocusScore)
+                      : '—',
+                ),
+                const SizedBox(height: 10),
+                _VoidDayDetailMetric(
+                  label: 'Всего отвлечений',
+                  value: '${day.distractions}',
+                ),
+                const SizedBox(height: 10),
+                _VoidDayDetailMetric(
+                  label: 'Заработано XP',
+                  value: '+${day.xpEarned} XP',
+                  accent: true,
+                ),
+              ],
             ],
           ),
         ),
@@ -2239,10 +2378,12 @@ class _VoidDayDetailMetric extends StatelessWidget {
   const _VoidDayDetailMetric({
     required this.label,
     required this.value,
+    this.accent = false,
   });
 
   final String label;
   final String value;
+  final bool accent;
 
   @override
   Widget build(BuildContext context) {
@@ -2252,7 +2393,11 @@ class _VoidDayDetailMetric extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.04),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: kVoidAccent.withValues(alpha: 0.16)),
+        border: Border.all(
+          color: accent
+              ? kVoidAccent.withValues(alpha: 0.28)
+              : kVoidAccent.withValues(alpha: 0.16),
+        ),
       ),
       child: Row(
         children: [
@@ -2270,7 +2415,9 @@ class _VoidDayDetailMetric extends StatelessWidget {
             style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w500,
-              color: Colors.white.withValues(alpha: 0.92),
+              color: accent
+                  ? kVoidAccent.withValues(alpha: 0.95)
+                  : Colors.white.withValues(alpha: 0.92),
             ),
           ),
         ],
@@ -2320,7 +2467,7 @@ class VoidCalendarMonthStatsPanel extends StatelessWidget {
           ),
           Expanded(
             child: _VoidCalendarMonthStatItem(
-              label: 'Лучшая серия',
+              label: 'Серия (30 дн.)',
               value: '${stats.longestStreak}',
             ),
           ),
@@ -2667,9 +2814,9 @@ class _VoidProfileTabState extends State<VoidProfileTab> {
                       value: formatFocusDuration(stats.totalFocusSeconds),
                     ),
                     SizedBox(height: m.gapM),
-                    VoidStatCard(
-                      label: 'Серия дней',
-                      value: '${stats.currentStreak}',
+                    VoidStreakCard(
+                      currentStreak: stats.currentStreak,
+                      bestStreak: stats.bestStreak,
                     ),
                     SizedBox(height: m.gapL),
                     VoidHistoryAccessCard(
@@ -4637,8 +4784,11 @@ class VoidDailyGoalCard extends StatefulWidget {
 }
 
 class _VoidDailyGoalCardState extends State<VoidDailyGoalCard>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   late final AnimationController _celebrationController;
+  late final AnimationController _progressController;
+  late final AnimationController _shimmerController;
+  late Animation<double> _progressAnimation;
   late final Animation<double> _scaleAnimation;
   late final Animation<double> _glowAnimation;
   late final Animation<double> _sparkleAnimation;
@@ -4648,47 +4798,91 @@ class _VoidDailyGoalCardState extends State<VoidDailyGoalCard>
   void initState() {
     super.initState();
     _wasCompleted = widget.todayFocusSeconds >= widget._goalSeconds;
-    _celebrationController = AnimationController(
+    _progressController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    );
+    _progressAnimation = Tween<double>(begin: 0, end: widget.progress).animate(
+      CurvedAnimation(
+        parent: _progressController,
+        curve: Curves.easeOutCubic,
+      ),
+    );
+    _progressController.forward();
+
+    _shimmerController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1400),
     );
+    if (!_wasCompleted && widget.progress > 0) {
+      _shimmerController.forward();
+    }
+
+    _celebrationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1800),
+    );
     _scaleAnimation = TweenSequence<double>([
       TweenSequenceItem(
-        tween: Tween(begin: 1.0, end: 1.04)
+        tween: Tween(begin: 1.0, end: 1.05)
             .chain(CurveTween(curve: Curves.easeOut)),
-        weight: 25,
+        weight: 20,
       ),
       TweenSequenceItem(
-        tween: Tween(begin: 1.04, end: 1.0)
+        tween: Tween(begin: 1.05, end: 0.985)
             .chain(CurveTween(curve: Curves.easeInOut)),
-        weight: 75,
+        weight: 20,
+      ),
+      TweenSequenceItem(
+        tween: Tween(begin: 0.985, end: 1.0)
+            .chain(CurveTween(curve: Curves.easeOut)),
+        weight: 60,
       ),
     ]).animate(_celebrationController);
     _glowAnimation = TweenSequence<double>([
       TweenSequenceItem(
         tween: Tween<double>(begin: 0, end: 1)
             .chain(CurveTween(curve: Curves.easeOut)),
-        weight: 30,
+        weight: 25,
       ),
       TweenSequenceItem(
-        tween: Tween<double>(begin: 1, end: 0.35)
+        tween: Tween<double>(begin: 1, end: 0.4)
             .chain(CurveTween(curve: Curves.easeIn)),
-        weight: 70,
+        weight: 75,
       ),
     ]).animate(_celebrationController);
     _sparkleAnimation = Tween<double>(begin: 0, end: 1).animate(
       CurvedAnimation(
         parent: _celebrationController,
-        curve: const Interval(0, 0.65, curve: Curves.easeOut),
+        curve: const Interval(0, 0.75, curve: Curves.easeOut),
       ),
     );
+  }
+
+  void _animateProgressTo(double target) {
+    final begin = _progressAnimation.value;
+    _progressAnimation = Tween<double>(begin: begin, end: target).animate(
+      CurvedAnimation(
+        parent: _progressController,
+        curve: Curves.easeOutCubic,
+      ),
+    );
+    _progressController.forward(from: 0);
   }
 
   @override
   void didUpdateWidget(VoidDailyGoalCard oldWidget) {
     super.didUpdateWidget(oldWidget);
     final completed = widget.todayFocusSeconds >= widget._goalSeconds;
+    if ((oldWidget.progress - widget.progress).abs() > 0.001) {
+      _animateProgressTo(widget.progress);
+      if (!completed) {
+        _shimmerController.forward(from: 0);
+      }
+    }
     if (completed && !_wasCompleted) {
+      HapticFeedback.mediumImpact();
+      _shimmerController.stop();
       _celebrationController.forward(from: 0);
     }
     _wasCompleted = completed;
@@ -4697,6 +4891,8 @@ class _VoidDailyGoalCardState extends State<VoidDailyGoalCard>
   @override
   void dispose() {
     _celebrationController.dispose();
+    _progressController.dispose();
+    _shimmerController.dispose();
     super.dispose();
   }
 
@@ -4704,127 +4900,221 @@ class _VoidDailyGoalCardState extends State<VoidDailyGoalCard>
   Widget build(BuildContext context) {
     final completed = widget.todayFocusSeconds >= widget._goalSeconds;
     final glowBoost = _glowAnimation.value;
+    final accentColor = completed ? kVoidGoalComplete : kVoidAccent;
 
     return AnimatedBuilder(
-      animation: _celebrationController,
+      animation: Listenable.merge([
+        _celebrationController,
+        _progressController,
+        _shimmerController,
+      ]),
       builder: (context, child) {
+        final animatedProgress = _progressAnimation.value.clamp(0.0, 1.0);
+        final percent = formatDailyGoalPercent(animatedProgress);
+
         return Transform.scale(
           scale: _scaleAnimation.value,
-          child: child,
-        );
-      },
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.04),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                color: kVoidAccent.withValues(
-                  alpha: completed
-                      ? 0.45 + glowBoost * 0.25
-                      : 0.22 + glowBoost * 0.15,
-                ),
-              ),
-              boxShadow: [
-                if (completed || glowBoost > 0)
-                  BoxShadow(
-                    color: kVoidAccent
-                        .withValues(alpha: 0.12 + glowBoost * 0.28),
-                    blurRadius: 14 + glowBoost * 18,
-                    spreadRadius: glowBoost * 2,
-                  ),
-              ],
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        'Сегодня:',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.white.withValues(alpha: 0.45),
-                        ),
-                      ),
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Container(
+                width: double.infinity,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+                decoration: BoxDecoration(
+                  color: completed
+                      ? kVoidGoalComplete.withValues(alpha: 0.06)
+                      : Colors.white.withValues(alpha: 0.04),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: accentColor.withValues(
+                      alpha: completed
+                          ? 0.45 + glowBoost * 0.3
+                          : 0.22 + glowBoost * 0.15,
                     ),
-                    if (completed)
-                      Text(
-                        'Выполнено',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w500,
-                          color: kVoidAccent.withValues(
-                            alpha: 0.9 + glowBoost * 0.1,
-                          ),
-                        ),
+                  ),
+                  boxShadow: [
+                    if (completed || glowBoost > 0)
+                      BoxShadow(
+                        color: accentColor
+                            .withValues(alpha: 0.12 + glowBoost * 0.32),
+                        blurRadius: 16 + glowBoost * 22,
+                        spreadRadius: glowBoost * 2.5,
                       ),
                   ],
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  formatDailyGoalProgress(
-                    widget.todayFocusSeconds,
-                    widget.goalMinutes,
-                  ),
-                  style: TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w300,
-                    color: Colors.white.withValues(alpha: 0.95),
-                  ),
-                ),
-                const SizedBox(height: 14),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(6),
-                  child: SizedBox(
-                    height: 8,
-                    child: Stack(
-                      fit: StackFit.expand,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
                       children: [
-                        ColoredBox(
-                          color: kVoidAccent.withValues(alpha: 0.12),
+                        Text(
+                          'Сегодня',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.white.withValues(alpha: 0.45),
+                          ),
                         ),
-                        FractionallySizedBox(
-                          alignment: Alignment.centerLeft,
-                          widthFactor: widget.progress,
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                colors: [
-                                  kVoidAccent.withValues(
-                                    alpha: 0.75 + glowBoost * 0.25,
-                                  ),
-                                  kVoidAccent,
-                                ],
-                              ),
-                              boxShadow: widget.progress > 0
-                                  ? [
-                                      BoxShadow(
-                                        color: kVoidAccent.withValues(
-                                          alpha: 0.35 + glowBoost * 0.45,
-                                        ),
-                                        blurRadius: 8 + glowBoost * 12,
-                                      ),
-                                    ]
-                                  : null,
+                        const Spacer(),
+                        Text(
+                          '$percent%',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                            color: accentColor.withValues(
+                              alpha: 0.88 + glowBoost * 0.12,
                             ),
                           ),
                         ),
                       ],
                     ),
+                    const SizedBox(height: 8),
+                    Text(
+                      formatDailyGoalProgress(
+                        widget.todayFocusSeconds,
+                        widget.goalMinutes,
+                      ),
+                      style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w300,
+                        color: completed
+                            ? kVoidGoalComplete.withValues(alpha: 0.95)
+                            : Colors.white.withValues(alpha: 0.95),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    _VoidAnimatedDailyGoalBar(
+                      progress: animatedProgress,
+                      shimmerValue: completed ? 0 : _shimmerController.value,
+                      accentColor: accentColor,
+                      glowBoost: glowBoost,
+                      completed: completed,
+                    ),
+                    if (completed) ...[
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.check_circle_rounded,
+                            size: 16,
+                            color: kVoidGoalComplete.withValues(
+                              alpha: 0.9 + glowBoost * 0.1,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Цель дня выполнена',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                              color: kVoidGoalComplete.withValues(
+                                alpha: 0.9 + glowBoost * 0.1,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              if (_sparkleAnimation.value > 0)
+                _DailyGoalSparkles(animation: _sparkleAnimation.value),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _VoidAnimatedDailyGoalBar extends StatelessWidget {
+  const _VoidAnimatedDailyGoalBar({
+    required this.progress,
+    required this.shimmerValue,
+    required this.accentColor,
+    required this.glowBoost,
+    required this.completed,
+  });
+
+  final double progress;
+  final double shimmerValue;
+  final Color accentColor;
+  final double glowBoost;
+  final bool completed;
+
+  @override
+  Widget build(BuildContext context) {
+    final shimmerOffset = -1.2 + shimmerValue * 2.4;
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: SizedBox(
+        height: 10,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            ColoredBox(
+              color: accentColor.withValues(alpha: completed ? 0.16 : 0.12),
+            ),
+            FractionallySizedBox(
+              alignment: Alignment.centerLeft,
+              widthFactor: progress,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: completed
+                      ? LinearGradient(
+                          colors: [
+                            accentColor.withValues(
+                              alpha: 0.8 + glowBoost * 0.2,
+                            ),
+                            accentColor,
+                          ],
+                        )
+                      : LinearGradient(
+                          begin: Alignment(shimmerOffset - 0.5, 0),
+                          end: Alignment(shimmerOffset + 0.5, 0),
+                          colors: [
+                            accentColor.withValues(alpha: 0.55),
+                            accentColor,
+                            accentColor.withValues(alpha: 0.7),
+                            accentColor.withValues(alpha: 0.55),
+                          ],
+                          stops: const [0.0, 0.45, 0.55, 1.0],
+                        ),
+                  boxShadow: progress > 0
+                      ? [
+                          BoxShadow(
+                            color: accentColor.withValues(
+                              alpha: 0.35 + glowBoost * 0.45,
+                            ),
+                            blurRadius: 10 + glowBoost * 14,
+                            spreadRadius: completed ? 0.5 : 0,
+                          ),
+                        ]
+                      : null,
+                ),
+              ),
+            ),
+            if (progress > 0.04)
+              FractionallySizedBox(
+                alignment: Alignment.centerLeft,
+                widthFactor: progress,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.white.withValues(alpha: 0.22),
+                        Colors.white.withValues(alpha: 0.02),
+                      ],
+                    ),
                   ),
                 ),
-              ],
-            ),
-          ),
-          if (_sparkleAnimation.value > 0)
-            _DailyGoalSparkles(animation: _sparkleAnimation.value),
-        ],
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -4874,10 +5164,10 @@ class _DailyGoalSparkles extends StatelessWidget {
                         height: 6,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: kVoidAccent.withValues(alpha: 0.85),
+                          color: kVoidGoalComplete.withValues(alpha: 0.85),
                           boxShadow: [
                             BoxShadow(
-                              color: kVoidAccent.withValues(alpha: 0.5),
+                              color: kVoidGoalComplete.withValues(alpha: 0.5),
                               blurRadius: 6,
                             ),
                           ],
@@ -5000,6 +5290,131 @@ class VoidLevelCard extends StatelessWidget {
             style: TextStyle(
               fontSize: 13,
               color: Colors.white.withValues(alpha: 0.55),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class VoidStreakCard extends StatelessWidget {
+  const VoidStreakCard({
+    super.key,
+    required this.currentStreak,
+    required this.bestStreak,
+  });
+
+  final int currentStreak;
+  final int bestStreak;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasStreak = currentStreak > 0;
+    final accent = hasStreak ? kVoidAccent : Colors.white;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: hasStreak
+              ? kVoidAccent.withValues(alpha: 0.28)
+              : kVoidAccent.withValues(alpha: 0.15),
+        ),
+        boxShadow: hasStreak
+            ? [
+                BoxShadow(
+                  color: kVoidAccent.withValues(alpha: 0.1),
+                  blurRadius: 14,
+                ),
+              ]
+            : null,
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: accent.withValues(alpha: 0.12),
+              border: Border.all(color: accent.withValues(alpha: 0.3)),
+            ),
+            child: Icon(
+              Icons.local_fire_department_rounded,
+              size: 22,
+              color: accent.withValues(alpha: hasStreak ? 0.95 : 0.45),
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Row(
+              children: [
+                Expanded(
+                  child: _VoidStreakMetric(
+                    label: 'Текущая серия',
+                    value: '$currentStreak',
+                    highlight: hasStreak,
+                  ),
+                ),
+                Container(
+                  width: 1,
+                  height: 34,
+                  color: Colors.white.withValues(alpha: 0.08),
+                ),
+                Expanded(
+                  child: _VoidStreakMetric(
+                    label: 'Лучшая серия',
+                    value: '$bestStreak',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _VoidStreakMetric extends StatelessWidget {
+  const _VoidStreakMetric({
+    required this.label,
+    required this.value,
+    this.highlight = false,
+  });
+
+  final String label;
+  final String value;
+  final bool highlight;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Column(
+        children: [
+          Text(
+            value,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w500,
+              color: highlight
+                  ? kVoidAccent.withValues(alpha: 0.95)
+                  : Colors.white.withValues(alpha: 0.9),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 10,
+              color: Colors.white.withValues(alpha: 0.4),
             ),
           ),
         ],
