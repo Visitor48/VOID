@@ -49,6 +49,25 @@ void main() {
     expect(unlocked.length, 6);
   });
 
+  test('session history sync rebuilds all completed sessions', () async {
+    SharedPreferences.setMockInitialValues({
+      'completedSessions': 11,
+      'totalFocusSeconds': 6600,
+      'totalDistractions': 22,
+      'session_distractions_history': '[2,2,2,2,2,2,2,2,2,2,2]',
+      'focus_data_uses_seconds': true,
+    });
+    await StatsService.instance.initialize(force: true);
+    await StatsService.instance.load(force: true);
+
+    expect(StatsService.instance.data.completedSessions, 11);
+    expect(StatsService.instance.data.sessionHistory.length, 11);
+    expect(
+      StatsService.instance.data.sessionHistory.first.focusScore,
+      98,
+    );
+  });
+
   test('computeFocusScore subtracts one point per distraction', () {
     expect(computeFocusScore(0), 100);
     expect(computeFocusScore(3), 97);
@@ -281,10 +300,13 @@ void main() {
     expect(find.text('Длительность'), findsOneWidget);
     expect(find.text('21с'), findsOneWidget);
     expect(find.text('Отвлечения'), findsOneWidget);
+    expect(find.text('Фокус-счёт'), findsWidgets);
     expect(find.text('XP'), findsOneWidget);
     expect(find.text('+4'), findsOneWidget);
+    expect(find.text('100'), findsWidgets);
     expect(StatsService.instance.data.sessionHistory.length, 1);
     expect(StatsService.instance.data.sessionHistory.first.focusSeconds, 21);
+    expect(StatsService.instance.data.sessionHistory.first.focusScore, 100);
   });
 
   testWidgets('distraction cooldown blocks spam clicks', (WidgetTester tester) async {

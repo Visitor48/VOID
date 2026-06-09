@@ -21,6 +21,7 @@ const _kTotalDistractions = 'totalDistractions';
 const _kSessionDistractionsHistory = 'session_distractions_history';
 const _kPreventedDistractionMinutes = 'prevented_distraction_minutes';
 const _kSessionHistory = 'session_history';
+const _kSessionFocusSecondsHistory = 'session_focus_seconds_history';
 const _kDailyGoalMinutes = 'daily_goal_minutes';
 const _kDefaultDailyGoalMinutes = 60;
 
@@ -31,26 +32,32 @@ class VoidSessionRecord {
     required this.completedAt,
     required this.focusSeconds,
     required this.distractions,
+    required this.focusScore,
     required this.xp,
   });
 
   final DateTime completedAt;
   final int focusSeconds;
   final int distractions;
+  final int focusScore;
   final int xp;
 
   Map<String, dynamic> toJson() => {
         'completedAt': completedAt.toIso8601String(),
         'focusSeconds': focusSeconds,
         'distractions': distractions,
+        'focusScore': focusScore,
         'xp': xp,
       };
 
   factory VoidSessionRecord.fromJson(Map<String, dynamic> json) {
+    final distractions = json['distractions'] as int? ?? 0;
     return VoidSessionRecord(
       completedAt: DateTime.parse(json['completedAt'] as String),
       focusSeconds: json['focusSeconds'] as int? ?? 0,
-      distractions: json['distractions'] as int? ?? 0,
+      distractions: distractions,
+      focusScore:
+          json['focusScore'] as int? ?? computeFocusScore(distractions),
       xp: json['xp'] as int? ?? 0,
     );
   }
@@ -350,13 +357,13 @@ class StatsService extends ChangeNotifier {
     return 0;
   }
 
-  static List<VoidSessionRecord> _readSessionHistory(SharedPreferences prefs) {
+  static List<VoidSessionRecord> _readSessionHistoryRaw(SharedPreferences prefs) {
     final raw = prefs.getString(_kSessionHistory);
     if (raw == null || raw.isEmpty) return [];
     try {
       final decoded = jsonDecode(raw);
       if (decoded is! List) return [];
-      final history = decoded
+      return decoded
           .whereType<Map>()
           .map(
             (entry) => VoidSessionRecord.fromJson(
@@ -364,11 +371,91 @@ class StatsService extends ChangeNotifier {
             ),
           )
           .toList();
-      history.sort((a, b) => b.completedAt.compareTo(a.completedAt));
-      return history;
     } catch (_) {
       return [];
     }
+  }
+
+  static List<int> _readSessionFocusSecondsHistory(SharedPreferences prefs) {
+    return _parseIntList(prefs.getString(_kSessionFocusSecondsHistory));
+  }
+
+  static List<VoidSessionRecord> _buildFullSessionHistory(
+    SharedPreferences prefs,
+  ) {
+    final completedSessions = _readCompletedSessions(prefs);
+    if (completedSessions == 0) return [];
+
+    final distractions = _readSessionDistractionsHistory(prefs);
+    final focusSecondsList = _readSessionFocusSecondsHistory(prefs);
+    final existing = _readSessionHistoryRaw(prefs);
+    existing.sort((a, b) => b.completedAt.compareTo(a.completedAt));
+    final totalFocus = _readTotalFocusSeconds(prefs);
+
+    final knownFocusTotal = focusSecondsList.fold<int>(0, (sum, value) => sum + value);
+    final legacySessionCount = completedSessions - focusSecondsList.length;
+    final remainingFocus = (totalFocus - knownFocusTotal).clamp(0, totalFocus);
+    final legacyFocusEstimate = legacySessionCount > 0
+        ? remainingFocus ~/ legacySessionCount
+        : 0;
+
+    final records = <VoidSessionRecord>[];
+
+    for (var i = 0; i < completedSessions; i++) {
+      final distractionsValue = i < distractions.length ? distractions[i] : 0;
+
+      int focusSecondsValue;
+      if (i < focusSecondsList.length) {
+        focusSecondsValue = focusSecondsList[i];
+      } else {
+        focusSecondsValue = legacyFocusEstimate;
+      }
+
+      final newestIndex = completedSessions - 1 - i;
+      DateTime completedAt;
+      if (newestIndex < existing.length) {
+        final existingRecord = existing[newestIndex];
+        completedAt = existingRecord.completedAt;
+        if (existingRecord.focusSeconds > 0 &&
+            i >= focusSecondsList.length) {
+          focusSecondsValue = existingRecord.focusSeconds;
+        }
+      } else {
+        completedAt = DateTime.now().subtract(
+          Duration(days: completedSessions - 1 - i, minutes: i * 7),
+        );
+      }
+
+      records.add(
+        VoidSessionRecord(
+          completedAt: completedAt,
+          focusSeconds: focusSecondsValue,
+          distractions: distractionsValue,
+          focusScore: computeFocusScore(distractionsValue),
+          xp: computeSessionXp(focusSecondsValue, distractionsValue),
+        ),
+      );
+    }
+
+    records.sort((a, b) => b.completedAt.compareTo(a.completedAt));
+    return records;
+  }
+
+  static Future<List<VoidSessionRecord>> _syncSessionHistory(
+    SharedPreferences prefs,
+  ) async {
+    final rebuilt = _buildFullSessionHistory(prefs);
+    await prefs.setString(
+      _kSessionHistory,
+      jsonEncode(rebuilt.map((record) => record.toJson()).toList()),
+    );
+    return rebuilt;
+  }
+
+  static List<VoidSessionRecord> _readSessionHistory(SharedPreferences prefs) {
+    final history = _readSessionHistoryRaw(prefs);
+    history.sort((a, b) => b.completedAt.compareTo(a.completedAt));
+    return history;
   }
 
   static List<int> _parseIntList(String? raw) {
@@ -458,7 +545,7 @@ class StatsService extends ChangeNotifier {
     });
   }
 
-  int _readCompletedSessions(SharedPreferences prefs) {
+  static int _readCompletedSessions(SharedPreferences prefs) {
     return prefs.getInt(_kCompletedSessions) ??
         prefs.getInt('total_sessions') ??
         0;
@@ -490,7 +577,7 @@ class StatsService extends ChangeNotifier {
     await prefs.setBool(_kFocusDataUsesSeconds, true);
   }
 
-  int _readTotalFocusSeconds(SharedPreferences prefs) {
+  static int _readTotalFocusSeconds(SharedPreferences prefs) {
     return prefs.getInt(_kTotalFocusSeconds) ?? 0;
   }
 
@@ -546,7 +633,7 @@ class StatsService extends ChangeNotifier {
         currentStreak: currentStreak,
         preventedDistractionMinutes: preventedDistractionMinutes,
       );
-      final sessionHistory = _readSessionHistory(prefs);
+      final sessionHistory = await _syncSessionHistory(prefs);
       final todayFocusSeconds = _readTodayFocusSeconds(prefs, activity);
       final dailyGoalMinutes = _readDailyGoalMinutes(prefs);
       final averageFocusScore = _computeAverageFocusScore(
@@ -620,6 +707,8 @@ class StatsService extends ChangeNotifier {
           (prefs.getInt(_kTotalDistractions) ?? 0) + sessionDistractions;
       final sessionDistractionsHistory =
           _readSessionDistractionsHistory(prefs)..add(sessionDistractions);
+      final sessionFocusSecondsHistory =
+          _readSessionFocusSecondsHistory(prefs)..add(focusSeconds);
 
       await prefs.setInt(_kCompletedSessions, completedSessions);
       await prefs.setInt(_kTotalFocusSeconds, totalFocusSeconds);
@@ -633,6 +722,10 @@ class StatsService extends ChangeNotifier {
         _kSessionDistractionsHistory,
         jsonEncode(sessionDistractionsHistory),
       );
+      await prefs.setString(
+        _kSessionFocusSecondsHistory,
+        jsonEncode(sessionFocusSecondsHistory),
+      );
 
       if (sessionDistractions == 0 && focusSeconds > 0) {
         final preventedMinutes =
@@ -641,20 +734,7 @@ class StatsService extends ChangeNotifier {
         await prefs.setInt(_kPreventedDistractionMinutes, preventedMinutes);
       }
 
-      final sessionHistory = _readSessionHistory(prefs)
-        ..add(
-          VoidSessionRecord(
-            completedAt: DateTime.now(),
-            focusSeconds: focusSeconds,
-            distractions: sessionDistractions,
-            xp: computeSessionXp(focusSeconds, sessionDistractions),
-          ),
-        );
-      sessionHistory.sort((a, b) => b.completedAt.compareTo(a.completedAt));
-      await prefs.setString(
-        _kSessionHistory,
-        jsonEncode(sessionHistory.map((record) => record.toJson()).toList()),
-      );
+      await _syncSessionHistory(prefs);
 
       print('Saved sessions: $completedSessions');
       print(
@@ -1527,7 +1607,7 @@ class _VoidProfileTabState extends State<VoidProfileTab> {
                     ),
                     SizedBox(height: m.gapL),
                     VoidHistoryAccessCard(
-                      sessionCount: stats.sessionHistory.length,
+                      sessionCount: stats.completedSessions,
                       onTap: () {
                         Navigator.push<void>(
                           context,
@@ -1816,6 +1896,17 @@ class VoidSessionHistoryCard extends StatelessWidget {
                 child: _SessionHistoryMetric(
                   label: 'Отвлечения',
                   value: '${session.distractions}',
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: _SessionHistoryMetric(
+                  label: 'Фокус-счёт',
+                  value: '${session.focusScore}',
                 ),
               ),
               Expanded(
