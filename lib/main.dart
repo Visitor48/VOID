@@ -9,79 +9,402 @@ const Color kVoidBackground = Color(0xFF07070A);
 const Color kVoidAccent = Color(0xFF8B5CF6);
 
 const _kCompletedSessions = 'completedSessions';
+const _kTotalFocusSeconds = 'totalFocusSeconds';
 const _kTotalFocusMinutes = 'totalFocusMinutes';
+const _kFocusDataUsesSeconds = 'focus_data_uses_seconds';
 const _kCurrentStreak = 'currentStreak';
 const _kLastActiveDate = 'last_active_date';
 const _kDailyActivity = 'daily_activity';
+const _kTodaySessionsDate = 'todaySessionsDate';
+const _kTodaySessions = 'todaySessions';
+const _kTotalDistractions = 'totalDistractions';
+const _kSessionDistractionsHistory = 'session_distractions_history';
+const _kPreventedDistractionMinutes = 'prevented_distraction_minutes';
+const _kSessionHistory = 'session_history';
+const _kDailyGoalMinutes = 'daily_goal_minutes';
+const _kDefaultDailyGoalMinutes = 60;
 
 const _kDayLabels = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+
+class VoidSessionRecord {
+  const VoidSessionRecord({
+    required this.completedAt,
+    required this.focusSeconds,
+    required this.distractions,
+    required this.xp,
+  });
+
+  final DateTime completedAt;
+  final int focusSeconds;
+  final int distractions;
+  final int xp;
+
+  Map<String, dynamic> toJson() => {
+        'completedAt': completedAt.toIso8601String(),
+        'focusSeconds': focusSeconds,
+        'distractions': distractions,
+        'xp': xp,
+      };
+
+  factory VoidSessionRecord.fromJson(Map<String, dynamic> json) {
+    return VoidSessionRecord(
+      completedAt: DateTime.parse(json['completedAt'] as String),
+      focusSeconds: json['focusSeconds'] as int? ?? 0,
+      distractions: json['distractions'] as int? ?? 0,
+      xp: json['xp'] as int? ?? 0,
+    );
+  }
+}
+
+String formatSessionDateTime(DateTime dateTime) {
+  final day = dateTime.day.toString().padLeft(2, '0');
+  final month = dateTime.month.toString().padLeft(2, '0');
+  final year = dateTime.year;
+  final hour = dateTime.hour.toString().padLeft(2, '0');
+  final minute = dateTime.minute.toString().padLeft(2, '0');
+  return '$day.$month.$year · $hour:$minute';
+}
 
 class VoidDayActivity {
   const VoidDayActivity({
     required this.date,
-    required this.focusMinutes,
+    required this.focusSeconds,
   });
 
   final DateTime date;
-  final int focusMinutes;
+  final int focusSeconds;
 
   String get dayLabel => _kDayLabels[date.weekday - 1];
 }
 
-class VoidAnalyticsData {
-  const VoidAnalyticsData({
+class VoidAchievement {
+  const VoidAchievement({
+    required this.id,
+    required this.title,
+    required this.description,
+    required this.icon,
+    required this.isUnlocked,
+  });
+
+  final String id;
+  final String title;
+  final String description;
+  final IconData icon;
+  final bool isUnlocked;
+}
+
+List<VoidAchievement> buildAchievements({
+  required int completedSessions,
+  required int totalFocusSeconds,
+  required int currentStreak,
+  required int preventedDistractionMinutes,
+}) {
+  return [
+    VoidAchievement(
+      id: 'first_session',
+      title: 'Первая сессия',
+      description: 'Завершите первую фокус-сессию',
+      icon: Icons.flag_rounded,
+      isUnlocked: completedSessions >= 1,
+    ),
+    VoidAchievement(
+      id: 'focus_10_minutes',
+      title: '10 минут фокуса',
+      description: 'Накопите 10 минут фокуса',
+      icon: Icons.timer_outlined,
+      isUnlocked: totalFocusSeconds >= 600,
+    ),
+    VoidAchievement(
+      id: 'focus_1_hour',
+      title: '1 час фокуса',
+      description: 'Накопите 1 час фокуса',
+      icon: Icons.hourglass_top_rounded,
+      isUnlocked: totalFocusSeconds >= 3600,
+    ),
+    VoidAchievement(
+      id: 'sessions_10',
+      title: '10 сессий',
+      description: 'Завершите 10 фокус-сессий',
+      icon: Icons.layers_rounded,
+      isUnlocked: completedSessions >= 10,
+    ),
+    VoidAchievement(
+      id: 'prevented_100',
+      title: '100 отвлечений предотвращено',
+      description: '100 минут фокуса без отвлечений',
+      icon: Icons.shield_moon_rounded,
+      isUnlocked: preventedDistractionMinutes >= 100,
+    ),
+    VoidAchievement(
+      id: 'streak_7_days',
+      title: '7 дней подряд',
+      description: 'Поддерживайте серию 7 дней',
+      icon: Icons.local_fire_department_rounded,
+      isUnlocked: currentStreak >= 7,
+    ),
+  ];
+}
+
+class StatsData {
+  const StatsData({
     required this.completedSessions,
-    required this.totalFocusMinutes,
+    required this.totalFocusSeconds,
     required this.currentStreak,
+    required this.todaySessions,
+    required this.distractions,
+    required this.averageDistractionsPerSession,
+    required this.preventedDistractionMinutes,
+    required this.achievements,
+    required this.sessionHistory,
+    required this.todayFocusSeconds,
+    required this.dailyGoalMinutes,
+    required this.averageFocusScore,
     required this.last7Days,
   });
 
   final int completedSessions;
-  final int totalFocusMinutes;
+  final int totalFocusSeconds;
   final int currentStreak;
+  final int todaySessions;
+  final int distractions;
+  final double averageDistractionsPerSession;
+  final int preventedDistractionMinutes;
+  final List<VoidAchievement> achievements;
+  final List<VoidSessionRecord> sessionHistory;
+  final int todayFocusSeconds;
+  final int dailyGoalMinutes;
+  final double averageFocusScore;
   final List<VoidDayActivity> last7Days;
 
-  static const empty = VoidAnalyticsData(
+  int get todayFocusMinutes => todayFocusSeconds ~/ 60;
+
+  double get dailyGoalProgress => dailyGoalMinutes <= 0
+      ? 0
+      : (todayFocusMinutes / dailyGoalMinutes).clamp(0.0, 1.0);
+
+  int get unlockedAchievementsCount =>
+      achievements.where((achievement) => achievement.isUnlocked).length;
+
+  static const empty = StatsData(
     completedSessions: 0,
-    totalFocusMinutes: 0,
+    totalFocusSeconds: 0,
     currentStreak: 0,
+    todaySessions: 0,
+    distractions: 0,
+    averageDistractionsPerSession: 0,
+    preventedDistractionMinutes: 0,
+    achievements: [],
+    sessionHistory: [],
+    todayFocusSeconds: 0,
+    dailyGoalMinutes: _kDefaultDailyGoalMinutes,
+    averageFocusScore: 0,
     last7Days: [],
   );
 }
 
-String formatFocusMinutes(int totalMinutes) {
-  final hours = totalMinutes ~/ 60;
-  final minutes = totalMinutes % 60;
-  if (hours > 0) {
-    return '${hours}ч ${minutes}м';
-  }
-  return '${minutes}м';
+String formatDailyGoalProgress(int todayMinutes, int goalMinutes) {
+  return '$todayMinutes / $goalMinutes минут';
 }
 
-class VoidAnalyticsStore extends ChangeNotifier {
-  VoidAnalyticsStore._();
+String formatAverageDistractions(double value) {
+  if (value <= 0) return '0';
+  final rounded = (value * 10).round() / 10;
+  if ((rounded - rounded.round()).abs() < 0.01) {
+    return rounded.round().toString();
+  }
+  return rounded.toStringAsFixed(1).replaceAll('.', ',');
+}
 
-  static final VoidAnalyticsStore instance = VoidAnalyticsStore._();
+String formatFocusDuration(int totalSeconds) {
+  if (totalSeconds <= 0) return '0 сек';
+  final hours = totalSeconds ~/ 3600;
+  final minutes = (totalSeconds % 3600) ~/ 60;
+  final seconds = totalSeconds % 60;
+  if (hours > 0) {
+    final parts = <String>['${hours}ч'];
+    if (minutes > 0) parts.add('${minutes}м');
+    if (seconds > 0) parts.add('${seconds}с');
+    return parts.join(' ');
+  }
+  if (minutes > 0) {
+    if (seconds > 0) return '${minutes}м ${seconds}с';
+    return '${minutes}м';
+  }
+  return '${seconds}с';
+}
 
-  VoidAnalyticsData data = VoidAnalyticsData.empty;
+int computeActualFocusSeconds({
+  required int totalSessionSeconds,
+  required int remainingSeconds,
+}) {
+  if (remainingSeconds <= 0) {
+    return totalSessionSeconds;
+  }
+  return totalSessionSeconds - remainingSeconds;
+}
+
+int computeSessionXp(int elapsedSeconds, int distractions) {
+  final baseXp = (elapsedSeconds / 60 * 10).round();
+  return (baseXp - distractions * 5).clamp(0, 99999);
+}
+
+int computeFocusScore(int distractions) {
+  return (100 - distractions).clamp(0, 100);
+}
+
+String formatFocusScore(num score) {
+  if (score == score.roundToDouble()) {
+    return score.round().toString();
+  }
+  return score.toStringAsFixed(1).replaceAll('.', ',');
+}
+
+class StatsService extends ChangeNotifier {
+  StatsService._();
+
+  static final StatsService instance = StatsService._();
+
+  StatsData data = StatsData.empty;
   bool isLoading = false;
   Future<void>? _loadFuture;
+  SharedPreferences? _prefs;
+  Future<void>? _initFuture;
 
   bool get hasData => data.completedSessions > 0;
+  bool get isInitialized => _prefs != null;
 
-  static VoidAnalyticsData _emptyData() => VoidAnalyticsData(
+  Future<void> initialize({bool force = false}) {
+    if (force) {
+      _prefs = null;
+      _initFuture = null;
+    }
+    if (_prefs != null) {
+      return Future.value();
+    }
+    return _initFuture ??= _initializePrefs();
+  }
+
+  Future<void> _initializePrefs() async {
+    try {
+      _prefs = await SharedPreferences.getInstance();
+      print('Prefs initialized successfully');
+    } catch (e, stackTrace) {
+      _prefs = null;
+      _initFuture = null;
+      print('[StatsService] Prefs initialization failed: $e');
+      print(stackTrace);
+      rethrow;
+    }
+  }
+
+  Future<SharedPreferences?> _requirePrefs() async {
+    try {
+      await initialize();
+      return _prefs;
+    } catch (e, stackTrace) {
+      print('[StatsService] SharedPreferences unavailable: $e');
+      print(stackTrace);
+      return null;
+    }
+  }
+
+  static StatsData _emptyData() => StatsData(
         completedSessions: 0,
-        totalFocusMinutes: 0,
+        totalFocusSeconds: 0,
         currentStreak: 0,
+        todaySessions: 0,
+        distractions: 0,
+        averageDistractionsPerSession: 0,
+        preventedDistractionMinutes: 0,
+        achievements: buildAchievements(
+          completedSessions: 0,
+          totalFocusSeconds: 0,
+          currentStreak: 0,
+          preventedDistractionMinutes: 0,
+        ),
+        sessionHistory: [],
+        todayFocusSeconds: 0,
+        dailyGoalMinutes: _kDefaultDailyGoalMinutes,
+        averageFocusScore: 0,
         last7Days: _buildLast7Days({}),
       );
 
-  static Future<SharedPreferences?> _getPrefs() async {
-    try {
-      return await SharedPreferences.getInstance();
-    } catch (_) {
-      return null;
+  static double _computeAverageFocusScore({
+    required List<VoidSessionRecord> history,
+    required List<int> distractionsHistory,
+  }) {
+    if (history.isNotEmpty) {
+      final total = history.fold<int>(
+        0,
+        (sum, record) => sum + computeFocusScore(record.distractions),
+      );
+      return total / history.length;
     }
+    if (distractionsHistory.isNotEmpty) {
+      final total = distractionsHistory.fold<int>(
+        0,
+        (sum, distractions) => sum + computeFocusScore(distractions),
+      );
+      return total / distractionsHistory.length;
+    }
+    return 0;
+  }
+
+  static List<VoidSessionRecord> _readSessionHistory(SharedPreferences prefs) {
+    final raw = prefs.getString(_kSessionHistory);
+    if (raw == null || raw.isEmpty) return [];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return [];
+      final history = decoded
+          .whereType<Map>()
+          .map(
+            (entry) => VoidSessionRecord.fromJson(
+              entry.map((key, value) => MapEntry(key.toString(), value)),
+            ),
+          )
+          .toList();
+      history.sort((a, b) => b.completedAt.compareTo(a.completedAt));
+      return history;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static List<int> _parseIntList(String? raw) {
+    if (raw == null || raw.isEmpty) return [];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return [];
+      return decoded
+          .map((value) => value is num ? value.toInt() : int.tryParse('$value') ?? 0)
+          .toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static List<int> _readSessionDistractionsHistory(SharedPreferences prefs) {
+    return _parseIntList(prefs.getString(_kSessionDistractionsHistory));
+  }
+
+  static double _computeAverageDistractions({
+    required List<int> history,
+    required int completedSessions,
+    required int totalDistractions,
+  }) {
+    if (completedSessions == 0) return 0;
+    if (history.isNotEmpty) {
+      return history.fold<int>(0, (sum, value) => sum + value) / history.length;
+    }
+    return totalDistractions / completedSessions;
+  }
+
+  int _readTodaySessions(SharedPreferences prefs) {
+    final today = _dateKey(DateTime.now());
+    final storedDate = prefs.getString(_kTodaySessionsDate);
+    if (storedDate != today) return 0;
+    return prefs.getInt(_kTodaySessions) ?? 0;
   }
 
   static String _dateKey(DateTime date) {
@@ -99,7 +422,7 @@ class VoidAnalyticsStore extends ChangeNotifier {
       final key = _dateKey(date);
       return VoidDayActivity(
         date: date,
-        focusMinutes: activity[key] ?? 0,
+        focusSeconds: activity[key] ?? 0,
       );
     });
   }
@@ -141,9 +464,34 @@ class VoidAnalyticsStore extends ChangeNotifier {
         0;
   }
 
-  int _readTotalFocusMinutes(SharedPreferences prefs) {
-    return prefs.getInt(_kTotalFocusMinutes) ??
-        ((prefs.getInt('total_focus_seconds') ?? 0) ~/ 60);
+  Future<void> _migrateToSecondsIfNeeded(SharedPreferences prefs) async {
+    if (prefs.getBool(_kFocusDataUsesSeconds) == true) return;
+
+    if (!prefs.containsKey(_kTotalFocusSeconds)) {
+      if (prefs.containsKey(_kTotalFocusMinutes)) {
+        await prefs.setInt(
+          _kTotalFocusSeconds,
+          (prefs.getInt(_kTotalFocusMinutes) ?? 0) * 60,
+        );
+        final activity = _parseActivity(prefs.getString(_kDailyActivity));
+        if (activity.isNotEmpty) {
+          final migrated =
+              activity.map((key, value) => MapEntry(key, value * 60));
+          await prefs.setString(_kDailyActivity, jsonEncode(migrated));
+        }
+      } else {
+        await prefs.setInt(
+          _kTotalFocusSeconds,
+          prefs.getInt('total_focus_seconds') ?? 0,
+        );
+      }
+    }
+
+    await prefs.setBool(_kFocusDataUsesSeconds, true);
+  }
+
+  int _readTotalFocusSeconds(SharedPreferences prefs) {
+    return prefs.getInt(_kTotalFocusSeconds) ?? 0;
   }
 
   int _readCurrentStreak(SharedPreferences prefs) {
@@ -152,33 +500,80 @@ class VoidAnalyticsStore extends ChangeNotifier {
         0;
   }
 
+  int _readTodayFocusSeconds(
+    SharedPreferences prefs,
+    Map<String, int> activity,
+  ) {
+    return activity[_dateKey(DateTime.now())] ?? 0;
+  }
+
+  int _readDailyGoalMinutes(SharedPreferences prefs) {
+    return prefs.getInt(_kDailyGoalMinutes) ?? _kDefaultDailyGoalMinutes;
+  }
+
   Future<void> _loadInternal() async {
     isLoading = true;
     notifyListeners();
 
     try {
-      final prefs = await _getPrefs();
+      await initialize();
+      final prefs = await _requirePrefs();
       if (prefs == null) {
         data = _emptyData();
-        print('[VOID] Loaded: prefs unavailable, using empty analytics');
         return;
       }
 
+      await _migrateToSecondsIfNeeded(prefs);
+
       final activity = _parseActivity(prefs.getString(_kDailyActivity));
       final completedSessions = _readCompletedSessions(prefs);
-      final totalFocusMinutes = _readTotalFocusMinutes(prefs);
+      final totalFocusSeconds = _readTotalFocusSeconds(prefs);
       final currentStreak = _readCurrentStreak(prefs);
-
-      data = VoidAnalyticsData(
+      final todaySessions = _readTodaySessions(prefs);
+      final distractions = prefs.getInt(_kTotalDistractions) ?? 0;
+      final sessionDistractionsHistory =
+          _readSessionDistractionsHistory(prefs);
+      final averageDistractionsPerSession = _computeAverageDistractions(
+        history: sessionDistractionsHistory,
         completedSessions: completedSessions,
-        totalFocusMinutes: totalFocusMinutes,
+        totalDistractions: distractions,
+      );
+      final preventedDistractionMinutes =
+          prefs.getInt(_kPreventedDistractionMinutes) ?? 0;
+      final achievements = buildAchievements(
+        completedSessions: completedSessions,
+        totalFocusSeconds: totalFocusSeconds,
         currentStreak: currentStreak,
+        preventedDistractionMinutes: preventedDistractionMinutes,
+      );
+      final sessionHistory = _readSessionHistory(prefs);
+      final todayFocusSeconds = _readTodayFocusSeconds(prefs, activity);
+      final dailyGoalMinutes = _readDailyGoalMinutes(prefs);
+      final averageFocusScore = _computeAverageFocusScore(
+        history: sessionHistory,
+        distractionsHistory: sessionDistractionsHistory,
+      );
+
+      data = StatsData(
+        completedSessions: completedSessions,
+        totalFocusSeconds: totalFocusSeconds,
+        currentStreak: currentStreak,
+        todaySessions: todaySessions,
+        distractions: distractions,
+        averageDistractionsPerSession: averageDistractionsPerSession,
+        preventedDistractionMinutes: preventedDistractionMinutes,
+        achievements: achievements,
+        sessionHistory: sessionHistory,
+        todayFocusSeconds: todayFocusSeconds,
+        dailyGoalMinutes: dailyGoalMinutes,
+        averageFocusScore: averageFocusScore,
         last7Days: _buildLast7Days(activity),
       );
 
+      print('Loaded sessions: $completedSessions');
       print(
-        '[VOID] Loaded: completedSessions=$completedSessions, '
-        'totalFocusMinutes=$totalFocusMinutes, currentStreak=$currentStreak',
+        '[StatsService] Loaded: totalFocusSeconds=$totalFocusSeconds, '
+        'currentStreak=$currentStreak, todaySessions=$todaySessions',
       );
     } finally {
       isLoading = false;
@@ -186,23 +581,29 @@ class VoidAnalyticsStore extends ChangeNotifier {
     }
   }
 
-  Future<bool> recordCompletedSession({required int focusMinutes}) async {
-    final prefs = await _getPrefs();
+  Future<bool> completeSession({
+    required int focusSeconds,
+    int sessionDistractions = 0,
+  }) async {
+    await initialize();
+    final prefs = await _requirePrefs();
     if (prefs == null) {
-      print('[VOID] Save failed: SharedPreferences unavailable');
       return false;
     }
 
     try {
+      await _migrateToSecondsIfNeeded(prefs);
+
       final today = _dateKey(DateTime.now());
       final yesterday =
           _dateKey(DateTime.now().subtract(const Duration(days: 1)));
 
       final completedSessions = _readCompletedSessions(prefs) + 1;
-      final totalFocusMinutes = _readTotalFocusMinutes(prefs) + focusMinutes;
+      final totalFocusSeconds =
+          _readTotalFocusSeconds(prefs) + focusSeconds;
 
       final activity = _parseActivity(prefs.getString(_kDailyActivity));
-      activity[today] = (activity[today] ?? 0) + focusMinutes;
+      activity[today] = (activity[today] ?? 0) + focusSeconds;
 
       final lastActive = prefs.getString(_kLastActiveDate);
       int streak = _readCurrentStreak(prefs);
@@ -214,18 +615,57 @@ class VoidAnalyticsStore extends ChangeNotifier {
         streak = 1;
       }
 
+      final todaySessions = _readTodaySessions(prefs) + 1;
+      final totalDistractions =
+          (prefs.getInt(_kTotalDistractions) ?? 0) + sessionDistractions;
+      final sessionDistractionsHistory =
+          _readSessionDistractionsHistory(prefs)..add(sessionDistractions);
+
       await prefs.setInt(_kCompletedSessions, completedSessions);
-      await prefs.setInt(_kTotalFocusMinutes, totalFocusMinutes);
+      await prefs.setInt(_kTotalFocusSeconds, totalFocusSeconds);
       await prefs.setInt(_kCurrentStreak, streak);
       await prefs.setString(_kLastActiveDate, today);
       await prefs.setString(_kDailyActivity, jsonEncode(activity));
-
-      print(
-        '[VOID] Saved: completedSessions=$completedSessions, '
-        'totalFocusMinutes=$totalFocusMinutes, currentStreak=$streak',
+      await prefs.setString(_kTodaySessionsDate, today);
+      await prefs.setInt(_kTodaySessions, todaySessions);
+      await prefs.setInt(_kTotalDistractions, totalDistractions);
+      await prefs.setString(
+        _kSessionDistractionsHistory,
+        jsonEncode(sessionDistractionsHistory),
       );
-    } catch (e) {
-      print('[VOID] Save failed: $e');
+
+      if (sessionDistractions == 0 && focusSeconds > 0) {
+        final preventedMinutes =
+            (prefs.getInt(_kPreventedDistractionMinutes) ?? 0) +
+                focusSeconds ~/ 60;
+        await prefs.setInt(_kPreventedDistractionMinutes, preventedMinutes);
+      }
+
+      final sessionHistory = _readSessionHistory(prefs)
+        ..add(
+          VoidSessionRecord(
+            completedAt: DateTime.now(),
+            focusSeconds: focusSeconds,
+            distractions: sessionDistractions,
+            xp: computeSessionXp(focusSeconds, sessionDistractions),
+          ),
+        );
+      sessionHistory.sort((a, b) => b.completedAt.compareTo(a.completedAt));
+      await prefs.setString(
+        _kSessionHistory,
+        jsonEncode(sessionHistory.map((record) => record.toJson()).toList()),
+      );
+
+      print('Saved sessions: $completedSessions');
+      print(
+        '[StatsService] Saved: focusSeconds=$focusSeconds, '
+        'sessionDistractions=$sessionDistractions, '
+        'totalFocusSeconds=$totalFocusSeconds, '
+        'currentStreak=$streak, todaySessions=$todaySessions',
+      );
+    } catch (e, stackTrace) {
+      print('[StatsService] Save failed: $e');
+      print(stackTrace);
       return false;
     }
 
@@ -309,11 +749,7 @@ class VoidMetrics {
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  try {
-    await SharedPreferences.getInstance();
-  } catch (_) {
-    // Plugin may be unavailable after hot reload; analytics falls back to empty.
-  }
+  await StatsService.instance.initialize();
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -518,16 +954,14 @@ class _VoidShellState extends State<VoidShell> {
   void initState() {
     super.initState();
     _currentIndex = widget.initialIndex;
-    VoidAnalyticsStore.instance.scheduleLoad(force: true);
+    StatsService.instance.scheduleLoad(force: true);
   }
 
   void _onTabSelected(int index) {
     if (index == _currentIndex) return;
     HapticFeedback.selectionClick();
     setState(() => _currentIndex = index);
-    if (index == 0 || index == 2) {
-      VoidAnalyticsStore.instance.load(force: true);
-    }
+    StatsService.instance.load(force: true);
   }
 
   void _openFocusTab() {
@@ -652,7 +1086,7 @@ class _VoidHomeTabState extends State<VoidHomeTab> {
   @override
   void initState() {
     super.initState();
-    VoidAnalyticsStore.instance.scheduleLoad(force: true);
+    StatsService.instance.scheduleLoad(force: true);
   }
 
   @override
@@ -665,9 +1099,9 @@ class _VoidHomeTabState extends State<VoidHomeTab> {
         child: Padding(
           padding: EdgeInsets.symmetric(horizontal: m.paddingH),
           child: ListenableBuilder(
-            listenable: VoidAnalyticsStore.instance,
+            listenable: StatsService.instance,
             builder: (context, _) {
-              final analytics = VoidAnalyticsStore.instance.data;
+              final analytics = StatsService.instance.data;
 
               return Column(
                 children: [
@@ -687,6 +1121,12 @@ class _VoidHomeTabState extends State<VoidHomeTab> {
                             ),
                           ),
                           SizedBox(height: m.gapL),
+                          VoidDailyGoalCard(
+                            todayMinutes: analytics.todayFocusMinutes,
+                            goalMinutes: analytics.dailyGoalMinutes,
+                            progress: analytics.dailyGoalProgress,
+                          ),
+                          SizedBox(height: m.gapM),
                           VoidStatCard(
                             label: 'Всего сессий',
                             value: '${analytics.completedSessions}',
@@ -695,8 +1135,8 @@ class _VoidHomeTabState extends State<VoidHomeTab> {
                           SizedBox(height: m.gapM),
                           VoidStatCard(
                             label: 'Время фокуса',
-                            value: formatFocusMinutes(
-                              analytics.totalFocusMinutes,
+                            value: formatFocusDuration(
+                              analytics.totalFocusSeconds,
                             ),
                           ),
                           SizedBox(height: m.gapM),
@@ -753,7 +1193,7 @@ class _VoidAnalyticsTabState extends State<VoidAnalyticsTab> {
   @override
   void initState() {
     super.initState();
-    VoidAnalyticsStore.instance.scheduleLoad(force: true);
+    StatsService.instance.scheduleLoad(force: true);
   }
 
   @override
@@ -764,9 +1204,9 @@ class _VoidAnalyticsTabState extends State<VoidAnalyticsTab> {
       glowCenter: const Alignment(0, -0.5),
       child: SafeArea(
         child: ListenableBuilder(
-          listenable: VoidAnalyticsStore.instance,
+          listenable: StatsService.instance,
           builder: (context, _) {
-            final store = VoidAnalyticsStore.instance;
+            final store = StatsService.instance;
             final analytics = store.data;
 
             return SingleChildScrollView(
@@ -806,12 +1246,29 @@ class _VoidAnalyticsTabState extends State<VoidAnalyticsTab> {
                     SizedBox(height: m.gapM),
                     VoidStatCard(
                       label: 'Всего часов фокуса',
-                      value: formatFocusMinutes(analytics.totalFocusMinutes),
+                      value: formatFocusDuration(analytics.totalFocusSeconds),
                     ),
                     SizedBox(height: m.gapM),
                     VoidStatCard(
                       label: 'Текущая серия дней',
                       value: '${analytics.currentStreak}',
+                    ),
+                    SizedBox(height: m.gapM),
+                    VoidStatCard(
+                      label: 'Всего отвлечений',
+                      value: '${analytics.distractions}',
+                    ),
+                    SizedBox(height: m.gapM),
+                    VoidStatCard(
+                      label: 'Среднее отвлечений за сессию',
+                      value: formatAverageDistractions(
+                        analytics.averageDistractionsPerSession,
+                      ),
+                    ),
+                    SizedBox(height: m.gapM),
+                    VoidStatCard(
+                      label: 'Фокус-счёт',
+                      value: formatFocusScore(analytics.averageFocusScore),
                     ),
                     SizedBox(height: m.gapM),
                     VoidActivityChart(days: analytics.last7Days),
@@ -876,9 +1333,9 @@ class VoidActivityChart extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final m = VoidMetrics.of(context);
-    final maxMinutes = days.fold<int>(
+    final maxSeconds = days.fold<int>(
       0,
-      (max, day) => day.focusMinutes > max ? day.focusMinutes : max,
+      (max, day) => day.focusSeconds > max ? day.focusSeconds : max,
     );
 
     return Container(
@@ -923,13 +1380,13 @@ class VoidActivityChart extends StatelessWidget {
                             children: [
                               Container(
                                 height: _barHeight(
-                                  day.focusMinutes,
-                                  maxMinutes,
+                                  day.focusSeconds,
+                                  maxSeconds,
                                   maxBarHeight,
                                 ),
                                 decoration: BoxDecoration(
                                   borderRadius: BorderRadius.circular(6),
-                                  gradient: day.focusMinutes > 0
+                                  gradient: day.focusSeconds > 0
                                   ? LinearGradient(
                                       begin: Alignment.bottomCenter,
                                       end: Alignment.topCenter,
@@ -939,10 +1396,10 @@ class VoidActivityChart extends StatelessWidget {
                                       ],
                                     )
                                   : null,
-                              color: day.focusMinutes == 0
+                              color: day.focusSeconds == 0
                                   ? Colors.white.withValues(alpha: 0.06)
                                   : null,
-                              boxShadow: day.focusMinutes > 0
+                              boxShadow: day.focusSeconds > 0
                                   ? [
                                       BoxShadow(
                                         color:
@@ -982,8 +1439,19 @@ class VoidActivityChart extends StatelessWidget {
   }
 }
 
-class VoidProfileTab extends StatelessWidget {
+class VoidProfileTab extends StatefulWidget {
   const VoidProfileTab({super.key});
+
+  @override
+  State<VoidProfileTab> createState() => _VoidProfileTabState();
+}
+
+class _VoidProfileTabState extends State<VoidProfileTab> {
+  @override
+  void initState() {
+    super.initState();
+    StatsService.instance.scheduleLoad(force: true);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -994,61 +1462,412 @@ class VoidProfileTab extends StatelessWidget {
       child: SafeArea(
         child: Padding(
           padding: EdgeInsets.symmetric(horizontal: m.paddingH),
-          child: Column(
+          child: ListenableBuilder(
+            listenable: StatsService.instance,
+            builder: (context, _) {
+              final stats = StatsService.instance.data;
+
+              return SingleChildScrollView(
+                physics: const BouncingScrollPhysics(),
+                child: Column(
+                  children: [
+                    SizedBox(height: m.gapL),
+                    Container(
+                      width: 80,
+                      height: 80,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: kVoidAccent.withValues(alpha: 0.35),
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: kVoidAccent.withValues(alpha: 0.2),
+                            blurRadius: 20,
+                          ),
+                        ],
+                      ),
+                      child: Icon(
+                        Icons.person_rounded,
+                        size: 36,
+                        color: kVoidAccent.withValues(alpha: 0.8),
+                      ),
+                    ),
+                    SizedBox(height: m.gapM),
+                    Text(
+                      'Профиль',
+                      style: TextStyle(
+                        fontSize: m.welcomeTitleSize,
+                        fontWeight: FontWeight.w300,
+                        color: Colors.white.withValues(alpha: 0.95),
+                      ),
+                    ),
+                    SizedBox(height: m.gapS),
+                    Text(
+                      'Пользователь VOID',
+                      style: TextStyle(
+                        fontSize: m.subtitleSize,
+                        color: Colors.white.withValues(alpha: 0.45),
+                      ),
+                    ),
+                    SizedBox(height: m.gapL),
+                    VoidStatCard(
+                      label: 'Всего сессий',
+                      value: '${stats.completedSessions}',
+                    ),
+                    SizedBox(height: m.gapM),
+                    VoidStatCard(
+                      label: 'Время фокуса',
+                      value: formatFocusDuration(stats.totalFocusSeconds),
+                    ),
+                    SizedBox(height: m.gapM),
+                    VoidStatCard(
+                      label: 'Серия дней',
+                      value: '${stats.currentStreak}',
+                    ),
+                    SizedBox(height: m.gapL),
+                    VoidHistoryAccessCard(
+                      sessionCount: stats.sessionHistory.length,
+                      onTap: () {
+                        Navigator.push<void>(
+                          context,
+                          MaterialPageRoute<void>(
+                            builder: (_) => const VoidSessionHistoryScreen(),
+                          ),
+                        );
+                      },
+                    ),
+                    SizedBox(height: m.gapM),
+                    VoidAchievementsSection(
+                      achievements: stats.achievements,
+                      unlockedCount: stats.unlockedAchievementsCount,
+                    ),
+                    SizedBox(height: m.gapM),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class VoidHistoryAccessCard extends StatelessWidget {
+  const VoidHistoryAccessCard({
+    super.key,
+    required this.sessionCount,
+    required this.onTap,
+  });
+
+  final int sessionCount;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Ink(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.04),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: kVoidAccent.withValues(alpha: 0.25)),
+          ),
+          child: Row(
             children: [
-              SizedBox(height: m.gapL),
               Container(
-                width: 80,
-                height: 80,
+                width: 40,
+                height: 40,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  border: Border.all(
-                    color: kVoidAccent.withValues(alpha: 0.35),
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: kVoidAccent.withValues(alpha: 0.2),
-                      blurRadius: 20,
+                  color: kVoidAccent.withValues(alpha: 0.16),
+                  border: Border.all(color: kVoidAccent.withValues(alpha: 0.35)),
+                ),
+                child: Icon(
+                  Icons.history_rounded,
+                  size: 20,
+                  color: kVoidAccent.withValues(alpha: 0.9),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'История сессий',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.white.withValues(alpha: 0.92),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      sessionCount == 0
+                          ? 'Пока нет завершённых сессий'
+                          : '$sessionCount ${_sessionCountLabel(sessionCount)}',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.white.withValues(alpha: 0.45),
+                      ),
                     ),
                   ],
                 ),
-                child: Icon(
-                  Icons.person_rounded,
-                  size: 36,
-                  color: kVoidAccent.withValues(alpha: 0.8),
-                ),
               ),
-              SizedBox(height: m.gapM),
-              Text(
-                'Профиль',
-                style: TextStyle(
-                  fontSize: m.welcomeTitleSize,
-                  fontWeight: FontWeight.w300,
-                  color: Colors.white.withValues(alpha: 0.95),
-                ),
-              ),
-              SizedBox(height: m.gapS),
-              Text(
-                'Пользователь VOID',
-                style: TextStyle(
-                  fontSize: m.subtitleSize,
-                  color: Colors.white.withValues(alpha: 0.45),
-                ),
-              ),
-              SizedBox(height: m.gapL),
-              const VoidStatCard(
-                label: 'Всего сессий',
-                value: '42',
-              ),
-              SizedBox(height: m.gapM),
-              const VoidStatCard(
-                label: 'Серия дней',
-                value: '5',
+              Icon(
+                Icons.chevron_right_rounded,
+                color: kVoidAccent.withValues(alpha: 0.75),
               ),
             ],
           ),
         ),
       ),
+    );
+  }
+
+  static String _sessionCountLabel(int count) {
+    final mod10 = count % 10;
+    final mod100 = count % 100;
+    if (mod100 >= 11 && mod100 <= 14) return 'сессий';
+    if (mod10 == 1) return 'сессия';
+    if (mod10 >= 2 && mod10 <= 4) return 'сессии';
+    return 'сессий';
+  }
+}
+
+class VoidSessionHistoryScreen extends StatefulWidget {
+  const VoidSessionHistoryScreen({super.key});
+
+  @override
+  State<VoidSessionHistoryScreen> createState() => _VoidSessionHistoryScreenState();
+}
+
+class _VoidSessionHistoryScreenState extends State<VoidSessionHistoryScreen> {
+  @override
+  void initState() {
+    super.initState();
+    StatsService.instance.scheduleLoad(force: true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final m = VoidMetrics.of(context);
+
+    return Scaffold(
+      backgroundColor: kVoidBackground,
+      appBar: AppBar(
+        backgroundColor: kVoidBackground,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        leading: IconButton(
+          icon: Icon(
+            Icons.arrow_back_ios_new_rounded,
+            color: Colors.white.withValues(alpha: 0.8),
+            size: 20,
+          ),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: Text(
+          'История сессий',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w400,
+            color: Colors.white.withValues(alpha: 0.95),
+          ),
+        ),
+        centerTitle: true,
+      ),
+      body: Stack(
+        children: [
+          const VoidAmbientGlow(center: Alignment(0, -0.55)),
+          SafeArea(
+            child: ListenableBuilder(
+              listenable: StatsService.instance,
+              builder: (context, _) {
+                final store = StatsService.instance;
+                final history = store.data.sessionHistory;
+
+                if (store.isLoading && history.isEmpty) {
+                  return const Center(
+                    child: CircularProgressIndicator(
+                      color: kVoidAccent,
+                      strokeWidth: 2,
+                    ),
+                  );
+                }
+
+                if (history.isEmpty) {
+                  return Padding(
+                    padding: EdgeInsets.symmetric(horizontal: m.paddingH),
+                    child: Center(
+                      child: Container(
+                        width: double.infinity,
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 20,
+                          vertical: m.isCompact ? 28 : 36,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.04),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: kVoidAccent.withValues(alpha: 0.2),
+                          ),
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.history_rounded,
+                              size: 40,
+                              color: kVoidAccent.withValues(alpha: 0.6),
+                            ),
+                            const SizedBox(height: 14),
+                            Text(
+                              'История пуста',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w400,
+                                color: Colors.white.withValues(alpha: 0.85),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Завершите первую сессию, чтобы увидеть историю',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 13,
+                                height: 1.4,
+                                color: Colors.white.withValues(alpha: 0.45),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                }
+
+                return ListView.separated(
+                  physics: const BouncingScrollPhysics(),
+                  padding: EdgeInsets.fromLTRB(
+                    m.paddingH,
+                    m.gapS,
+                    m.paddingH,
+                    m.gapL,
+                  ),
+                  itemCount: history.length,
+                  separatorBuilder: (_, __) => SizedBox(height: m.gapS),
+                  itemBuilder: (context, index) {
+                    return VoidSessionHistoryCard(session: history[index]);
+                  },
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class VoidSessionHistoryCard extends StatelessWidget {
+  const VoidSessionHistoryCard({super.key, required this.session});
+
+  final VoidSessionRecord session;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: kVoidAccent.withValues(alpha: 0.18)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            formatSessionDateTime(session.completedAt),
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: Colors.white.withValues(alpha: 0.9),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: _SessionHistoryMetric(
+                  label: 'Длительность',
+                  value: formatFocusDuration(session.focusSeconds),
+                ),
+              ),
+              Expanded(
+                child: _SessionHistoryMetric(
+                  label: 'Отвлечения',
+                  value: '${session.distractions}',
+                ),
+              ),
+              Expanded(
+                child: _SessionHistoryMetric(
+                  label: 'XP',
+                  value: '+${session.xp}',
+                  accent: true,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SessionHistoryMetric extends StatelessWidget {
+  const _SessionHistoryMetric({
+    required this.label,
+    required this.value,
+    this.accent = false,
+  });
+
+  final String label;
+  final String value;
+  final bool accent;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 10,
+            color: Colors.white.withValues(alpha: 0.4),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w500,
+            color: accent
+                ? kVoidAccent
+                : Colors.white.withValues(alpha: 0.88),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -1065,6 +1884,9 @@ class _VoidFocusTabState extends State<VoidFocusTab> {
   static const int _totalSeconds = _sessionMinutes * 60;
 
   int _remainingSeconds = _totalSeconds;
+  int _sessionDistractions = 0;
+  int _distractionFeedbackTick = 0;
+  int _distractionCooldownSeconds = 0;
   bool _isRunning = false;
   bool _isPaused = false;
   bool _isCompleted = false;
@@ -1083,17 +1905,35 @@ class _VoidFocusTabState extends State<VoidFocusTab> {
   }
 
   void _tick() {
-    if (!_isRunning || _isPaused || _isCompleted) return;
+    if (!_isRunning || _isPaused || _isCompleted || _sessionSaved) return;
+    if (_distractionCooldownSeconds > 0) {
+      _distractionCooldownSeconds--;
+    }
     if (_remainingSeconds <= 1) {
-      setState(() => _remainingSeconds = 0);
-      unawaited(_finishSession());
+      unawaited(_finishSession(
+        remainingAtFinish: 0,
+        naturalCompletion: true,
+      ));
     } else {
       setState(() => _remainingSeconds--);
     }
   }
 
-  Future<void> _finishSession() async {
-    if (_sessionSaved || _isCompleted) return;
+  Future<void> _finishSession({
+    int? remainingAtFinish,
+    bool naturalCompletion = false,
+  }) async {
+    if (_sessionSaved) return;
+    _sessionSaved = true;
+
+    final remaining = remainingAtFinish ?? _remainingSeconds;
+    final elapsedSeconds = _totalSeconds - remaining;
+    final focusSeconds = computeActualFocusSeconds(
+      totalSessionSeconds: _totalSeconds,
+      remainingSeconds: remaining,
+    );
+    final distractions = _sessionDistractions;
+    final xp = computeSessionXp(elapsedSeconds, distractions);
 
     _timer?.cancel();
     setState(() {
@@ -1104,12 +1944,35 @@ class _VoidFocusTabState extends State<VoidFocusTab> {
     });
     HapticFeedback.mediumImpact();
 
-    await VoidAnalyticsStore.instance.recordCompletedSession(
-      focusMinutes: _sessionMinutes,
+    print(
+      '[FocusSession] actualSeconds=$focusSeconds '
+      '(remaining=$remaining, elapsed=$elapsedSeconds)',
     );
-    _sessionSaved = true;
 
-    if (mounted) await _showCompletionDialog();
+    await StatsService.instance.completeSession(
+      focusSeconds: focusSeconds,
+      sessionDistractions: distractions,
+    );
+
+    if (mounted) {
+      await _showCompletionDialog(
+        elapsedSeconds: elapsedSeconds,
+        distractions: distractions,
+        xp: xp,
+        focusScore: computeFocusScore(distractions),
+      );
+    }
+  }
+
+  void _recordDistraction() {
+    if (!_isRunning || _isCompleted || _distractionCooldownSeconds > 0) return;
+
+    _distractionCooldownSeconds = 3;
+    HapticFeedback.selectionClick();
+    setState(() {
+      _sessionDistractions++;
+      _distractionFeedbackTick++;
+    });
   }
 
   void _startSession() {
@@ -1130,6 +1993,9 @@ class _VoidFocusTabState extends State<VoidFocusTab> {
     _timer?.cancel();
     setState(() {
       _remainingSeconds = _totalSeconds;
+      _sessionDistractions = 0;
+      _distractionFeedbackTick = 0;
+      _distractionCooldownSeconds = 0;
       _isRunning = false;
       _isPaused = false;
       _isCompleted = false;
@@ -1137,7 +2003,12 @@ class _VoidFocusTabState extends State<VoidFocusTab> {
     });
   }
 
-  Future<void> _showCompletionDialog() async {
+  Future<void> _showCompletionDialog({
+    required int elapsedSeconds,
+    required int distractions,
+    required int xp,
+    required int focusScore,
+  }) async {
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -1154,6 +2025,31 @@ class _VoidFocusTabState extends State<VoidFocusTab> {
             color: Colors.white.withValues(alpha: 0.95),
             fontWeight: FontWeight.w500,
           ),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _CompletionSummaryRow(
+              label: 'Длительность',
+              value: formatFocusDuration(elapsedSeconds),
+            ),
+            const SizedBox(height: 12),
+            _CompletionSummaryRow(
+              label: 'Отвлечения',
+              value: '$distractions',
+            ),
+            const SizedBox(height: 12),
+            _CompletionSummaryRow(
+              label: 'Получено XP',
+              value: '+$xp',
+              accent: true,
+            ),
+            const SizedBox(height: 12),
+            _CompletionSummaryRow(
+              label: 'Фокус-счёт',
+              value: '$focusScore',
+            ),
+          ],
         ),
         actionsAlignment: MainAxisAlignment.center,
         actions: [
@@ -1259,27 +2155,55 @@ class _VoidFocusTabState extends State<VoidFocusTab> {
                   ),
                 ),
               ),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Expanded(
-                    child: _SessionStat(
-                      label: 'Сессий сегодня',
-                      value: '0',
-                    ),
-                  ),
-                  Container(
-                    width: 1,
-                    height: 28,
-                    color: Colors.white.withValues(alpha: 0.1),
-                  ),
-                  const Expanded(
-                    child: _SessionStat(
-                      label: 'Отвлечений',
-                      value: '0',
-                    ),
-                  ),
-                ],
+              ListenableBuilder(
+                listenable: StatsService.instance,
+                builder: (context, _) {
+                  final stats = StatsService.instance.data;
+                  final sessionActive = _isRunning && !_isCompleted;
+
+                  return Column(
+                    children: [
+                      _DistractionRecordedToast(
+                        trigger: _distractionFeedbackTick,
+                      ),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Expanded(
+                            child: _SessionStat(
+                              label: 'Сессий сегодня',
+                              value: '${stats.todaySessions}',
+                            ),
+                          ),
+                          Container(
+                            width: 1,
+                            height: 28,
+                            color: Colors.white.withValues(alpha: 0.1),
+                          ),
+                          Expanded(
+                            child: _DistractionCounter(
+                              count: _sessionDistractions,
+                              isActive: sessionActive,
+                              onTap: sessionActive ? _recordDistraction : null,
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (sessionActive) ...[
+                        SizedBox(height: m.gapS),
+                        Text(
+                          'Отмечайте моменты, когда вы отвлеклись от задачи',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 11,
+                            height: 1.35,
+                            color: Colors.white.withValues(alpha: 0.38),
+                          ),
+                        ),
+                      ],
+                    ],
+                  );
+                },
               ),
               SizedBox(height: m.gapL),
               Row(
@@ -1404,11 +2328,252 @@ class _VoidFocusTabState extends State<VoidFocusTab> {
   }
 }
 
+class _DistractionRecordedToast extends StatefulWidget {
+  const _DistractionRecordedToast({required this.trigger});
+
+  final int trigger;
+
+  @override
+  State<_DistractionRecordedToast> createState() =>
+      _DistractionRecordedToastState();
+}
+
+class _DistractionRecordedToastState extends State<_DistractionRecordedToast>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _opacity;
+  late final Animation<Offset> _slide;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1500),
+    );
+    _opacity = TweenSequence<double>([
+      TweenSequenceItem(
+        tween: Tween<double>(begin: 0, end: 1)
+            .chain(CurveTween(curve: Curves.easeOut)),
+        weight: 20,
+      ),
+      TweenSequenceItem(tween: ConstantTween<double>(1), weight: 45),
+      TweenSequenceItem(
+        tween: Tween<double>(begin: 1, end: 0)
+            .chain(CurveTween(curve: Curves.easeIn)),
+        weight: 35,
+      ),
+    ]).animate(_controller);
+    _slide = Tween<Offset>(
+      begin: const Offset(0, 0.25),
+      end: Offset.zero,
+    ).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(0, 0.35, curve: Curves.easeOutCubic),
+      ),
+    );
+  }
+
+  @override
+  void didUpdateWidget(_DistractionRecordedToast oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.trigger > oldWidget.trigger) {
+      _controller.forward(from: 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        if (_controller.value == 0) {
+          return const SizedBox(height: 0);
+        }
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Opacity(
+            opacity: _opacity.value,
+            child: SlideTransition(
+              position: _slide,
+              child: child,
+            ),
+          ),
+        );
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: kVoidAccent.withValues(alpha: 0.14),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: kVoidAccent.withValues(alpha: 0.35)),
+          boxShadow: [
+            BoxShadow(
+              color: kVoidAccent.withValues(alpha: 0.18),
+              blurRadius: 12,
+            ),
+          ],
+        ),
+        child: Text(
+          'Отвлечение зафиксировано',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+            color: Colors.white.withValues(alpha: 0.88),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DistractionCounter extends StatefulWidget {
+  const _DistractionCounter({
+    required this.count,
+    required this.isActive,
+    this.onTap,
+  });
+
+  final int count;
+  final bool isActive;
+  final VoidCallback? onTap;
+
+  @override
+  State<_DistractionCounter> createState() => _DistractionCounterState();
+}
+
+class _DistractionCounterState extends State<_DistractionCounter>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulseController;
+  late final Animation<double> _scaleAnimation;
+  late final Animation<double> _glowAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 320),
+    );
+    _scaleAnimation = TweenSequence<double>([
+      TweenSequenceItem(
+        tween: Tween(begin: 1.0, end: 1.14)
+            .chain(CurveTween(curve: Curves.easeOut)),
+        weight: 35,
+      ),
+      TweenSequenceItem(
+        tween: Tween(begin: 1.14, end: 1.0)
+            .chain(CurveTween(curve: Curves.easeInOut)),
+        weight: 65,
+      ),
+    ]).animate(_pulseController);
+    _glowAnimation = Tween<double>(begin: 0, end: 1).animate(
+      CurvedAnimation(
+        parent: _pulseController,
+        curve: const Interval(0, 0.5, curve: Curves.easeOut),
+      ),
+    );
+  }
+
+  @override
+  void didUpdateWidget(_DistractionCounter oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.count > oldWidget.count) {
+      _pulseController.forward(from: 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _pulseController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final m = VoidMetrics.of(context);
+
+    return GestureDetector(
+      onTap: widget.onTap,
+      behavior: HitTestBehavior.opaque,
+      child: AnimatedBuilder(
+        animation: _pulseController,
+        builder: (context, child) {
+          return Transform.scale(
+            scale: _scaleAnimation.value,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                boxShadow: [
+                  if (_glowAnimation.value > 0)
+                    BoxShadow(
+                      color: kVoidAccent
+                          .withValues(alpha: 0.22 * _glowAnimation.value),
+                      blurRadius: 14 * _glowAnimation.value,
+                      spreadRadius: 1 * _glowAnimation.value,
+                    ),
+                ],
+              ),
+              child: child,
+            ),
+          );
+        },
+        child: Column(
+          children: [
+            Text(
+              'Отвлечений',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 11,
+                color: Colors.white.withValues(alpha: 0.4),
+              ),
+            ),
+            if (widget.isActive) ...[
+              const SizedBox(height: 2),
+              Text(
+                'Нажмите при потере концентрации',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 9,
+                  color: kVoidAccent.withValues(alpha: 0.55),
+                ),
+              ),
+            ],
+            const SizedBox(height: 4),
+            Text(
+              '${widget.count}',
+              style: TextStyle(
+                fontSize: m.statValueSize,
+                fontWeight: FontWeight.w300,
+                color: widget.isActive
+                    ? Colors.white.withValues(alpha: 0.95)
+                    : Colors.white.withValues(alpha: 0.9),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _SessionStat extends StatelessWidget {
-  const _SessionStat({required this.label, required this.value});
+  const _SessionStat({
+    required this.label,
+    required this.value,
+    this.hint,
+  });
 
   final String label;
   final String value;
+  final String? hint;
 
   @override
   Widget build(BuildContext context) {
@@ -1424,6 +2589,17 @@ class _SessionStat extends StatelessWidget {
             color: Colors.white.withValues(alpha: 0.4),
           ),
         ),
+        if (hint != null) ...[
+          const SizedBox(height: 2),
+          Text(
+            hint!,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 9,
+              color: kVoidAccent.withValues(alpha: 0.55),
+            ),
+          ),
+        ],
         const SizedBox(height: 4),
         Text(
           value,
@@ -1434,6 +2610,58 @@ class _SessionStat extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _CompletionSummaryRow extends StatelessWidget {
+  const _CompletionSummaryRow({
+    required this.label,
+    required this.value,
+    this.accent = false,
+  });
+
+  final String label;
+  final String value;
+  final bool accent;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: accent
+              ? kVoidAccent.withValues(alpha: 0.35)
+              : Colors.white.withValues(alpha: 0.08),
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.white.withValues(alpha: 0.55),
+              ),
+            ),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w500,
+              color: accent
+                  ? kVoidAccent
+                  : Colors.white.withValues(alpha: 0.92),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1455,6 +2683,274 @@ class VoidAmbientGlow extends StatelessWidget {
             kVoidBackground,
           ],
         ),
+      ),
+    );
+  }
+}
+
+class VoidAchievementsSection extends StatelessWidget {
+  const VoidAchievementsSection({
+    super.key,
+    required this.achievements,
+    required this.unlockedCount,
+  });
+
+  final List<VoidAchievement> achievements;
+  final int unlockedCount;
+
+  @override
+  Widget build(BuildContext context) {
+    final m = VoidMetrics.of(context);
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.symmetric(
+        horizontal: 16,
+        vertical: m.isCompact ? 16 : 18,
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: kVoidAccent.withValues(alpha: 0.18)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Достижения',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: Colors.white.withValues(alpha: 0.9),
+                  ),
+                ),
+              ),
+              Text(
+                '$unlockedCount/${achievements.length}',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: kVoidAccent.withValues(alpha: 0.85),
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: m.gapM),
+          for (var index = 0; index < achievements.length; index++) ...[
+            if (index > 0) SizedBox(height: m.gapS),
+            VoidAchievementCard(achievement: achievements[index]),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class VoidAchievementCard extends StatelessWidget {
+  const VoidAchievementCard({super.key, required this.achievement});
+
+  final VoidAchievement achievement;
+
+  @override
+  Widget build(BuildContext context) {
+    final unlocked = achievement.isUnlocked;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      decoration: BoxDecoration(
+        color: unlocked
+            ? kVoidAccent.withValues(alpha: 0.1)
+            : Colors.white.withValues(alpha: 0.03),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: unlocked
+              ? kVoidAccent.withValues(alpha: 0.35)
+              : Colors.white.withValues(alpha: 0.08),
+        ),
+        boxShadow: unlocked
+            ? [
+                BoxShadow(
+                  color: kVoidAccent.withValues(alpha: 0.12),
+                  blurRadius: 10,
+                ),
+              ]
+            : null,
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: unlocked
+                  ? kVoidAccent.withValues(alpha: 0.2)
+                  : Colors.white.withValues(alpha: 0.05),
+              border: Border.all(
+                color: unlocked
+                    ? kVoidAccent.withValues(alpha: 0.45)
+                    : Colors.white.withValues(alpha: 0.1),
+              ),
+            ),
+            child: Icon(
+              unlocked ? achievement.icon : Icons.lock_outline_rounded,
+              size: 20,
+              color: unlocked
+                  ? kVoidAccent
+                  : Colors.white.withValues(alpha: 0.28),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  achievement.title,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: unlocked
+                        ? Colors.white.withValues(alpha: 0.92)
+                        : Colors.white.withValues(alpha: 0.45),
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  achievement.description,
+                  style: TextStyle(
+                    fontSize: 11,
+                    height: 1.3,
+                    color: unlocked
+                        ? Colors.white.withValues(alpha: 0.5)
+                        : Colors.white.withValues(alpha: 0.28),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (unlocked)
+            Icon(
+              Icons.check_circle_rounded,
+              size: 18,
+              color: kVoidAccent.withValues(alpha: 0.85),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class VoidDailyGoalCard extends StatelessWidget {
+  const VoidDailyGoalCard({
+    super.key,
+    required this.todayMinutes,
+    required this.goalMinutes,
+    required this.progress,
+  });
+
+  final int todayMinutes;
+  final int goalMinutes;
+  final double progress;
+
+  @override
+  Widget build(BuildContext context) {
+    final completed = todayMinutes >= goalMinutes;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: completed
+              ? kVoidAccent.withValues(alpha: 0.45)
+              : kVoidAccent.withValues(alpha: 0.22),
+        ),
+        boxShadow: completed
+            ? [
+                BoxShadow(
+                  color: kVoidAccent.withValues(alpha: 0.12),
+                  blurRadius: 14,
+                ),
+              ]
+            : null,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Цель дня',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.white.withValues(alpha: 0.45),
+                  ),
+                ),
+              ),
+              if (completed)
+                Text(
+                  'Выполнено',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                    color: kVoidAccent.withValues(alpha: 0.9),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            formatDailyGoalProgress(todayMinutes, goalMinutes),
+            style: TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.w300,
+              color: Colors.white.withValues(alpha: 0.95),
+            ),
+          ),
+          const SizedBox(height: 14),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: SizedBox(
+              height: 8,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  ColoredBox(
+                    color: kVoidAccent.withValues(alpha: 0.12),
+                  ),
+                  FractionallySizedBox(
+                    alignment: Alignment.centerLeft,
+                    widthFactor: progress,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [
+                            kVoidAccent.withValues(alpha: 0.75),
+                            kVoidAccent,
+                          ],
+                        ),
+                        boxShadow: progress > 0
+                            ? [
+                                BoxShadow(
+                                  color: kVoidAccent.withValues(alpha: 0.35),
+                                  blurRadius: 8,
+                                ),
+                              ]
+                            : null,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
