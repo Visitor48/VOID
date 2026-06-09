@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 const Color kVoidBackground = Color(0xFF07070A);
 const Color kVoidAccent = Color(0xFF8B5CF6);
@@ -26,8 +28,10 @@ const _kSessionHistory = 'session_history';
 const _kSessionFocusSecondsHistory = 'session_focus_seconds_history';
 const _kSessionHistoryManuallyCleared = 'session_history_manually_cleared';
 const _kDailyGoalMinutes = 'daily_goal_minutes';
+const _kDailyGoalAchieved = 'daily_goal_achieved';
 const _kDefaultDailyGoalMinutes = 60;
 const kVoidAppVersion = '1.0.0';
+const kVoidRuStoreUrl = 'https://www.rustore.ru/catalog/app/ru.voidapp.focus';
 
 const _kDayLabels = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 
@@ -60,8 +64,7 @@ class VoidSessionRecord {
       completedAt: DateTime.parse(json['completedAt'] as String),
       focusSeconds: json['focusSeconds'] as int? ?? 0,
       distractions: distractions,
-      focusScore:
-          json['focusScore'] as int? ?? computeFocusScore(distractions),
+      focusScore: computeFocusScore(distractions),
       xp: json['xp'] as int? ?? 0,
     );
   }
@@ -136,6 +139,7 @@ List<VoidAchievement> buildAchievements({
   required int totalFocusSeconds,
   required int currentStreak,
   required int preventedDistractionMinutes,
+  required bool dailyGoalAchieved,
 }) {
   return [
     VoidAchievement(
@@ -179,6 +183,13 @@ List<VoidAchievement> buildAchievements({
       description: 'Поддерживайте серию 7 дней',
       icon: Icons.local_fire_department_rounded,
       isUnlocked: currentStreak >= 7,
+    ),
+    VoidAchievement(
+      id: 'daily_goal',
+      title: 'Цель дня',
+      description: 'Выполните дневную цель фокуса',
+      icon: Icons.track_changes_rounded,
+      isUnlocked: dailyGoalAchieved,
     ),
   ];
 }
@@ -254,19 +265,9 @@ class StatsData {
   );
 }
 
-String formatDailyGoalTodayDuration(int todayFocusSeconds) {
-  if (todayFocusSeconds <= 0) return '0с';
-  final minutes = todayFocusSeconds ~/ 60;
-  final seconds = todayFocusSeconds % 60;
-  if (minutes > 0) {
-    if (seconds > 0) return '${minutes}м ${seconds}с';
-    return '${minutes}м';
-  }
-  return '${seconds}с';
-}
-
 String formatDailyGoalProgress(int todayFocusSeconds, int goalMinutes) {
-  return '${formatDailyGoalTodayDuration(todayFocusSeconds)} / ${goalMinutes}м';
+  final todayMinutes = todayFocusSeconds ~/ 60;
+  return '$todayMinutes / $goalMinutes минут';
 }
 
 String formatAverageDistractions(double value) {
@@ -322,7 +323,7 @@ double computeLevelProgress(int totalXp) =>
 String formatLevelXpProgress(int xpInLevel) => '$xpInLevel / 100 XP';
 
 int computeFocusScore(int distractions) {
-  return (100 - distractions).clamp(0, 100);
+  return (100 - distractions * 3).clamp(0, 100);
 }
 
 String formatFocusScore(num score) {
@@ -330,6 +331,95 @@ String formatFocusScore(num score) {
     return score.round().toString();
   }
   return score.toStringAsFixed(1).replaceAll('.', ',');
+}
+
+String buildVoidFeedbackBody(String intro) {
+  return '$intro\n\n'
+      '---\n'
+      'VOID v$kVoidAppVersion\n'
+      'Платформа: ${defaultTargetPlatform.name}';
+}
+
+void showVoidSnackBar(BuildContext context, String message) {
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      backgroundColor: const Color(0xFF12121A),
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: kVoidAccent.withValues(alpha: 0.25)),
+      ),
+      content: Text(
+        message,
+        style: TextStyle(color: Colors.white.withValues(alpha: 0.9)),
+      ),
+    ),
+  );
+}
+
+Future<void> launchVoidExternalUri(
+  BuildContext context,
+  Uri uri, {
+  String? clipboardFallback,
+  required String failureMessage,
+  String? clipboardSuccessMessage,
+}) async {
+  try {
+    if (await canLaunchUrl(uri)) {
+      final launched = await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+      );
+      if (launched) return;
+    }
+  } catch (_) {}
+
+  if (clipboardFallback != null) {
+    try {
+      await Clipboard.setData(ClipboardData(text: clipboardFallback));
+      if (context.mounted) {
+        showVoidSnackBar(
+          context,
+          clipboardSuccessMessage ?? 'Текст скопирован в буфер обмена',
+        );
+      }
+      return;
+    } catch (_) {}
+  }
+
+  if (context.mounted) {
+    showVoidSnackBar(context, failureMessage);
+  }
+}
+
+Future<void> launchVoidMailFeedback(
+  BuildContext context, {
+  required String subject,
+  required String body,
+}) {
+  final uri = Uri(
+    scheme: 'mailto',
+    queryParameters: <String, String>{
+      'subject': subject,
+      'body': body,
+    },
+  );
+
+  return launchVoidExternalUri(
+    context,
+    uri,
+    clipboardFallback: '[$subject]\n$body',
+    failureMessage: 'Не удалось открыть почтовое приложение',
+    clipboardSuccessMessage: 'Шаблон письма скопирован в буфер обмена',
+  );
+}
+
+Future<void> launchVoidStoreListing(BuildContext context) {
+  return launchVoidExternalUri(
+    context,
+    Uri.parse(kVoidRuStoreUrl),
+    failureMessage: 'Не удалось открыть RuStore',
+  );
 }
 
 class StatsService extends ChangeNotifier {
@@ -388,6 +478,7 @@ class StatsService extends ChangeNotifier {
           totalFocusSeconds: 0,
           currentStreak: 0,
           preventedDistractionMinutes: 0,
+          dailyGoalAchieved: false,
         ),
         sessionHistory: [],
         todayFocusSeconds: 0,
@@ -673,6 +764,29 @@ class StatsService extends ChangeNotifier {
     return prefs.getInt(_kDailyGoalMinutes) ?? _kDefaultDailyGoalMinutes;
   }
 
+  static bool _readDailyGoalAchieved(SharedPreferences prefs) {
+    return prefs.getBool(_kDailyGoalAchieved) ?? false;
+  }
+
+  static bool _activityContainsDailyGoal(
+    Map<String, int> activity,
+    int goalMinutes,
+  ) {
+    final threshold = goalMinutes * 60;
+    return activity.values.any((seconds) => seconds >= threshold);
+  }
+
+  Future<void> _syncDailyGoalAchieved(
+    SharedPreferences prefs,
+    Map<String, int> activity,
+    int goalMinutes,
+  ) async {
+    if (_readDailyGoalAchieved(prefs)) return;
+    if (_activityContainsDailyGoal(activity, goalMinutes)) {
+      await prefs.setBool(_kDailyGoalAchieved, true);
+    }
+  }
+
   Future<void> _loadInternal() async {
     isLoading = true;
     notifyListeners();
@@ -702,15 +816,18 @@ class StatsService extends ChangeNotifier {
       );
       final preventedDistractionMinutes =
           prefs.getInt(_kPreventedDistractionMinutes) ?? 0;
+      final dailyGoalMinutes = _readDailyGoalMinutes(prefs);
+      await _syncDailyGoalAchieved(prefs, activity, dailyGoalMinutes);
+      final dailyGoalAchieved = _readDailyGoalAchieved(prefs);
       final achievements = buildAchievements(
         completedSessions: completedSessions,
         totalFocusSeconds: totalFocusSeconds,
         currentStreak: currentStreak,
         preventedDistractionMinutes: preventedDistractionMinutes,
+        dailyGoalAchieved: dailyGoalAchieved,
       );
       final sessionHistory = await _syncSessionHistory(prefs);
       final todayFocusSeconds = _readTodayFocusSeconds(prefs, activity);
-      final dailyGoalMinutes = _readDailyGoalMinutes(prefs);
       final averageFocusScore = _computeAverageFocusScore(
         history: sessionHistory,
         distractionsHistory: sessionDistractionsHistory,
@@ -808,6 +925,10 @@ class StatsService extends ChangeNotifier {
 
       await _syncSessionHistory(prefs);
 
+      final dailyGoalMinutes = _readDailyGoalMinutes(prefs);
+      if ((activity[today] ?? 0) >= dailyGoalMinutes * 60) {
+        await prefs.setBool(_kDailyGoalAchieved, true);
+      }
     } catch (_) {
       return false;
     }
@@ -838,6 +959,7 @@ class StatsService extends ChangeNotifier {
       await prefs.setString(_kSessionHistory, jsonEncode([]));
       await prefs.setString(_kSessionFocusSecondsHistory, jsonEncode([]));
       await prefs.setBool(_kSessionHistoryManuallyCleared, false);
+      await prefs.setBool(_kDailyGoalAchieved, false);
     } catch (_) {
       return false;
     }
@@ -1697,15 +1819,155 @@ class VoidActivityChart extends StatelessWidget {
   }
 }
 
+class VoidFocusCalendarScreen extends StatefulWidget {
+  const VoidFocusCalendarScreen({super.key});
+
+  @override
+  State<VoidFocusCalendarScreen> createState() =>
+      _VoidFocusCalendarScreenState();
+}
+
+class _VoidFocusCalendarScreenState extends State<VoidFocusCalendarScreen> {
+  @override
+  void initState() {
+    super.initState();
+    StatsService.instance.scheduleLoad(force: true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final m = VoidMetrics.of(context);
+
+    return Scaffold(
+      backgroundColor: kVoidBackground,
+      appBar: AppBar(
+        backgroundColor: kVoidBackground,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        leading: IconButton(
+          icon: Icon(
+            Icons.arrow_back_ios_new_rounded,
+            color: Colors.white.withValues(alpha: 0.8),
+            size: 20,
+          ),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: Text(
+          'Календарь фокуса',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w400,
+            color: Colors.white.withValues(alpha: 0.95),
+          ),
+        ),
+        centerTitle: true,
+      ),
+      body: Stack(
+        children: [
+          const VoidAmbientGlow(center: Alignment(0, -0.45)),
+          SafeArea(
+            child: ListenableBuilder(
+              listenable: StatsService.instance,
+              builder: (context, _) {
+                final store = StatsService.instance;
+                final stats = store.data;
+                final goalMinutes = stats.dailyGoalMinutes;
+                final days = stats.last30Days;
+                final focusDays = days
+                    .where((day) => day.focusSeconds > 0)
+                    .length;
+                final goalDays = days
+                    .where(
+                      (day) =>
+                          day.status(goalMinutes) ==
+                          VoidFocusDayStatus.completed,
+                    )
+                    .length;
+
+                if (store.isLoading && days.every((day) => day.focusSeconds == 0)) {
+                  return const Center(
+                    child: CircularProgressIndicator(
+                      color: kVoidAccent,
+                      strokeWidth: 2,
+                    ),
+                  );
+                }
+
+                return SingleChildScrollView(
+                  padding: EdgeInsets.fromLTRB(
+                    m.paddingH,
+                    m.gapM,
+                    m.paddingH,
+                    m.gapL,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Последние 30 дней',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.white.withValues(alpha: 0.42),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        focusDays == 0
+                            ? 'Завершите сессию, чтобы увидеть активность'
+                            : '$focusDays ${_focusDaysLabel(focusDays)} с фокусом'
+                                '${goalDays > 0 ? ' · $goalDays ${_goalDaysLabel(goalDays)}' : ''}',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.white.withValues(alpha: 0.3),
+                        ),
+                      ),
+                      SizedBox(height: m.gapM),
+                      VoidFocusCalendar(
+                        days: days,
+                        goalMinutes: goalMinutes,
+                        showHeader: false,
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _focusDaysLabel(int count) {
+    final mod10 = count % 10;
+    final mod100 = count % 100;
+    if (mod100 >= 11 && mod100 <= 14) return 'дней';
+    if (mod10 == 1) return 'день';
+    if (mod10 >= 2 && mod10 <= 4) return 'дня';
+    return 'дней';
+  }
+
+  static String _goalDaysLabel(int count) {
+    final mod10 = count % 10;
+    final mod100 = count % 100;
+    if (mod100 >= 11 && mod100 <= 14) return 'целей';
+    if (mod10 == 1) return 'цель';
+    if (mod10 >= 2 && mod10 <= 4) return 'цели';
+    return 'целей';
+  }
+}
+
 class VoidFocusCalendar extends StatelessWidget {
   const VoidFocusCalendar({
     super.key,
     required this.days,
     required this.goalMinutes,
+    this.showHeader = true,
   });
 
   final List<VoidDayActivity> days;
   final int goalMinutes;
+  final bool showHeader;
 
   @override
   Widget build(BuildContext context) {
@@ -1730,22 +1992,24 @@ class VoidFocusCalendar extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Календарь фокуса',
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.white.withValues(alpha: 0.45),
+          if (showHeader) ...[
+            Text(
+              'Календарь фокуса',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.white.withValues(alpha: 0.45),
+              ),
             ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Последние 30 дней',
-            style: TextStyle(
-              fontSize: 11,
-              color: Colors.white.withValues(alpha: 0.28),
+            const SizedBox(height: 4),
+            Text(
+              'Последние 30 дней',
+              style: TextStyle(
+                fontSize: 11,
+                color: Colors.white.withValues(alpha: 0.28),
+              ),
             ),
-          ),
-          SizedBox(height: m.gapM),
+            SizedBox(height: m.gapM),
+          ],
           GridView.builder(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
@@ -1984,6 +2248,19 @@ class _VoidProfileTabState extends State<VoidProfileTab> {
                       },
                     ),
                     SizedBox(height: m.gapM),
+                    VoidCalendarAccessCard(
+                      days: stats.last30Days,
+                      goalMinutes: stats.dailyGoalMinutes,
+                      onTap: () {
+                        Navigator.push<void>(
+                          context,
+                          MaterialPageRoute<void>(
+                            builder: (_) => const VoidFocusCalendarScreen(),
+                          ),
+                        );
+                      },
+                    ),
+                    SizedBox(height: m.gapM),
                     VoidAchievementsSection(
                       achievements: stats.achievements,
                       unlockedCount: stats.unlockedAchievementsCount,
@@ -2096,6 +2373,117 @@ class VoidHistoryAccessCard extends StatelessWidget {
     if (mod10 == 1) return 'сессия';
     if (mod10 >= 2 && mod10 <= 4) return 'сессии';
     return 'сессий';
+  }
+}
+
+class VoidCalendarAccessCard extends StatelessWidget {
+  const VoidCalendarAccessCard({
+    super.key,
+    required this.days,
+    required this.goalMinutes,
+    required this.onTap,
+  });
+
+  final List<VoidDayActivity> days;
+  final int goalMinutes;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final focusDays = days.where((day) => day.focusSeconds > 0).length;
+    final goalDays = days
+        .where(
+          (day) => day.status(goalMinutes) == VoidFocusDayStatus.completed,
+        )
+        .length;
+    final subtitle = focusDays == 0
+        ? 'Последние 30 дней'
+        : goalDays > 0
+            ? '$goalDays ${_goalDaysLabel(goalDays)} · $focusDays с фокусом'
+            : '$focusDays ${_focusDaysLabel(focusDays)} с фокусом';
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Ink(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.04),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: kVoidAccent.withValues(alpha: 0.25)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: kVoidGoalComplete.withValues(alpha: 0.12),
+                  border: Border.all(
+                    color: kVoidGoalComplete.withValues(alpha: 0.35),
+                  ),
+                ),
+                child: Icon(
+                  Icons.calendar_month_rounded,
+                  size: 20,
+                  color: kVoidGoalComplete.withValues(alpha: 0.9),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Календарь фокуса',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.white.withValues(alpha: 0.92),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.white.withValues(alpha: 0.45),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.chevron_right_rounded,
+                color: kVoidAccent.withValues(alpha: 0.75),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  static String _focusDaysLabel(int count) {
+    final mod10 = count % 10;
+    final mod100 = count % 100;
+    if (mod100 >= 11 && mod100 <= 14) return 'дней';
+    if (mod10 == 1) return 'день';
+    if (mod10 >= 2 && mod10 <= 4) return 'дня';
+    return 'дней';
+  }
+
+  static String _goalDaysLabel(int count) {
+    final mod10 = count % 10;
+    final mod100 = count % 100;
+    if (mod100 >= 11 && mod100 <= 14) return 'целей';
+    if (mod10 == 1) return 'цель';
+    if (mod10 >= 2 && mod10 <= 4) return 'цели';
+    return 'целей';
   }
 }
 
@@ -2283,6 +2671,36 @@ class VoidSettingsScreen extends StatelessWidget {
     );
   }
 
+  Future<void> _reportBug(BuildContext context) {
+    return launchVoidMailFeedback(
+      context,
+      subject: 'VOID — сообщение об ошибке',
+      body: buildVoidFeedbackBody(
+        'Опишите ошибку:\n'
+        '1. Что вы делали\n'
+        '2. Что произошло\n'
+        '3. Как должно работать',
+      ),
+    );
+  }
+
+  Future<void> _suggestFeature(BuildContext context) {
+    return launchVoidMailFeedback(
+      context,
+      subject: 'VOID — предложение функции',
+      body: buildVoidFeedbackBody(
+        'Опишите идею:\n'
+        '1. Какую функцию хотите\n'
+        '2. Зачем она нужна\n'
+        '3. Как вы будете её использовать',
+      ),
+    );
+  }
+
+  Future<void> _rateApp(BuildContext context) {
+    return launchVoidStoreListing(context);
+  }
+
   Future<void> _showAboutDialog(BuildContext context) async {
     await showDialog<void>(
       context: context,
@@ -2413,7 +2831,30 @@ class VoidSettingsScreen extends StatelessWidget {
                     subtitle: 'Скопировать статистику в буфер обмена (JSON)',
                     onTap: () => _exportData(context),
                   ),
+                  SizedBox(height: m.gapL),
+                  const VoidSettingsSectionHeader(title: 'Обратная связь'),
                   SizedBox(height: m.gapS),
+                  VoidSettingsOptionTile(
+                    icon: Icons.bug_report_outlined,
+                    title: 'Сообщить об ошибке',
+                    subtitle: 'Отправить отчёт через почтовое приложение',
+                    onTap: () => _reportBug(context),
+                  ),
+                  SizedBox(height: m.gapS),
+                  VoidSettingsOptionTile(
+                    icon: Icons.lightbulb_outline_rounded,
+                    title: 'Предложить функцию',
+                    subtitle: 'Поделиться идеей для следующих версий',
+                    onTap: () => _suggestFeature(context),
+                  ),
+                  SizedBox(height: m.gapS),
+                  VoidSettingsOptionTile(
+                    icon: Icons.star_outline_rounded,
+                    title: 'Оценить приложение',
+                    subtitle: 'Открыть страницу VOID в RuStore',
+                    onTap: () => _rateApp(context),
+                  ),
+                  SizedBox(height: m.gapL),
                   VoidSettingsOptionTile(
                     icon: Icons.info_outline_rounded,
                     title: 'О приложении',
@@ -2425,6 +2866,28 @@ class VoidSettingsScreen extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class VoidSettingsSectionHeader extends StatelessWidget {
+  const VoidSettingsSectionHeader({super.key, required this.title});
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 4),
+      child: Text(
+        title,
+        style: TextStyle(
+          fontSize: 11,
+          letterSpacing: 1.2,
+          fontWeight: FontWeight.w500,
+          color: Colors.white.withValues(alpha: 0.38),
+        ),
       ),
     );
   }

@@ -37,18 +37,21 @@ void main() {
       totalFocusSeconds: 0,
       currentStreak: 0,
       preventedDistractionMinutes: 0,
+      dailyGoalAchieved: false,
     );
     expect(locked.every((achievement) => !achievement.isUnlocked), isTrue);
     expect(locked.map((achievement) => achievement.title), contains('Первая сессия'));
+    expect(locked.map((achievement) => achievement.title), contains('Цель дня'));
 
     final unlocked = buildAchievements(
       completedSessions: 10,
       totalFocusSeconds: 3600,
       currentStreak: 7,
       preventedDistractionMinutes: 100,
+      dailyGoalAchieved: true,
     );
     expect(unlocked.every((achievement) => achievement.isUnlocked), isTrue);
-    expect(unlocked.length, 6);
+    expect(unlocked.length, 7);
   });
 
   test('session history sync rebuilds all completed sessions', () async {
@@ -66,7 +69,7 @@ void main() {
     expect(StatsService.instance.data.sessionHistory.length, 11);
     expect(
       StatsService.instance.data.sessionHistory.first.focusScore,
-      98,
+      94,
     );
   });
 
@@ -101,19 +104,34 @@ void main() {
     expect(StatsService.instance.data.xpInCurrentLevel, 0);
   });
 
-  test('computeFocusScore subtracts one point per distraction', () {
+  test('computeFocusScore subtracts three points per distraction', () {
     expect(computeFocusScore(0), 100);
-    expect(computeFocusScore(3), 97);
+    expect(computeFocusScore(3), 91);
+    expect(computeFocusScore(34), 0);
     expect(computeFocusScore(100), 0);
   });
 
-  test('formatDailyGoalProgress formats today duration with seconds', () {
-    expect(formatDailyGoalProgress(1380, 60), '23м / 60м');
-    expect(formatDailyGoalProgress(175, 60), '2м 55с / 60м');
-    expect(formatDailyGoalProgress(3240, 60), '54м / 60м');
-    expect(formatDailyGoalProgress(3600, 60), '60м / 60м');
-    expect(formatDailyGoalProgress(0, 60), '0с / 60м');
-    expect(formatDailyGoalProgress(21, 60), '21с / 60м');
+  test('formatDailyGoalProgress formats minutes toward daily goal', () {
+    expect(formatDailyGoalProgress(1380, 60), '23 / 60 минут');
+    expect(formatDailyGoalProgress(175, 60), '2 / 60 минут');
+    expect(formatDailyGoalProgress(3240, 60), '54 / 60 минут');
+    expect(formatDailyGoalProgress(3600, 60), '60 / 60 минут');
+    expect(formatDailyGoalProgress(0, 60), '0 / 60 минут');
+    expect(formatDailyGoalProgress(21, 60), '0 / 60 минут');
+  });
+
+  test('daily goal achievement unlocks after completing 60 minutes', () async {
+    final todayKey = _todayActivityKey();
+    SharedPreferences.setMockInitialValues({
+      'daily_activity': '{"$todayKey":3600}',
+      'focus_data_uses_seconds': true,
+    });
+    await StatsService.instance.initialize(force: true);
+    await StatsService.instance.load(force: true);
+
+    final dailyGoal = StatsService.instance.data.achievements
+        .firstWhere((achievement) => achievement.title == 'Цель дня');
+    expect(dailyGoal.isUnlocked, isTrue);
   });
 
   test('today focus resets automatically for a new day', () async {
@@ -164,7 +182,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Сегодня:'), findsOneWidget);
-    expect(find.text('54м / 60м'), findsOneWidget);
+    expect(find.text('54 / 60 минут'), findsOneWidget);
     expect(StatsService.instance.data.dailyGoalMinutes, 60);
     expect(StatsService.instance.data.todayFocusSeconds, 3240);
     expect(StatsService.instance.data.dailyGoalProgress, closeTo(0.9, 0.01));
@@ -186,12 +204,12 @@ void main() {
     await tester.tap(find.text('Начать фокус'));
     await tester.pumpAndSettle();
 
-    expect(find.text('60м / 60м'), findsOneWidget);
+    expect(find.text('60 / 60 минут'), findsOneWidget);
     expect(find.text('Выполнено'), findsOneWidget);
     expect(StatsService.instance.data.isDailyGoalCompleted, isTrue);
   });
 
-  testWidgets('daily goal shows seconds in progress text', (
+  testWidgets('daily goal shows partial minutes in progress text', (
     WidgetTester tester,
   ) async {
     final todayKey = _todayActivityKey();
@@ -207,7 +225,7 @@ void main() {
     await tester.tap(find.text('Начать фокус'));
     await tester.pumpAndSettle();
 
-    expect(find.text('2м 55с / 60м'), findsOneWidget);
+    expect(find.text('2 / 60 минут'), findsOneWidget);
     expect(
       StatsService.instance.data.dailyGoalProgress,
       closeTo(175 / 3600, 0.001),
@@ -251,7 +269,7 @@ void main() {
     expect(find.text('Всего отвлечений'), findsOneWidget);
     expect(find.text('Среднее отвлечений за сессию'), findsOneWidget);
     expect(find.text('Фокус-счёт'), findsOneWidget);
-    expect(find.text('98'), findsWidgets);
+    expect(find.text('94'), findsWidgets);
     expect(find.text('2'), findsWidgets);
     expect(find.text('Последние 7 дней активности'), findsOneWidget);
     expect(find.text('Календарь фокуса'), findsOneWidget);
@@ -271,8 +289,10 @@ void main() {
     expect(find.text('8'), findsWidgets);
     expect(find.text('3ч 20м'), findsWidgets);
     expect(find.text('История сессий'), findsOneWidget);
+    expect(find.text('Календарь фокуса'), findsOneWidget);
+    expect(find.byType(VoidCalendarAccessCard), findsOneWidget);
     expect(find.text('Достижения'), findsOneWidget);
-    expect(find.text('3/6'), findsOneWidget);
+    expect(find.text('3/7'), findsOneWidget);
     expect(find.text('Первая сессия'), findsOneWidget);
     expect(find.text('10 минут фокуса'), findsOneWidget);
     expect(find.text('1 час фокуса'), findsOneWidget);
@@ -363,7 +383,7 @@ void main() {
 
     expect(find.text('Отвлечения'), findsOneWidget);
     expect(find.text('Фокус-счёт'), findsWidgets);
-    expect(find.text('98'), findsWidgets);
+    expect(find.text('94'), findsWidgets);
     expect(find.text('2'), findsWidgets);
 
     await tester.tap(find.text('Готово'));
@@ -376,7 +396,7 @@ void main() {
     expect(find.text('Среднее отвлечений за сессию'), findsOneWidget);
     expect(StatsService.instance.data.distractions, 2);
     expect(StatsService.instance.data.averageDistractionsPerSession, 2);
-    expect(StatsService.instance.data.averageFocusScore, 98);
+    expect(StatsService.instance.data.averageFocusScore, 94);
   });
 
   testWidgets('session history shows completed sessions newest first', (WidgetTester tester) async {
@@ -620,7 +640,39 @@ void main() {
     expect(find.text('Сбросить статистику'), findsOneWidget);
     expect(find.text('Очистить историю сессий'), findsOneWidget);
     expect(find.text('Экспорт данных'), findsOneWidget);
+    expect(find.text('Обратная связь'), findsOneWidget);
+    expect(find.text('Сообщить об ошибке'), findsOneWidget);
+    expect(find.text('Предложить функцию'), findsOneWidget);
+    expect(find.text('Оценить приложение'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('О приложении'),
+      120,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
     expect(find.text('О приложении'), findsOneWidget);
+  });
+
+  testWidgets('feedback actions complete without error', (WidgetTester tester) async {
+    await _openSettings(tester);
+
+    await tester.ensureVisible(find.text('Сообщить об ошибке'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Сообщить об ошибке'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    await tester.ensureVisible(find.text('Предложить функцию'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Предложить функцию'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    await tester.ensureVisible(find.text('Оценить приложение'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Оценить приложение'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
   });
 
   testWidgets('reset statistics clears stats after confirmation', (WidgetTester tester) async {
@@ -689,9 +741,38 @@ void main() {
     expect(json, contains('"completedSessions"'));
   });
 
+  testWidgets('profile opens focus calendar screen', (WidgetTester tester) async {
+    await tester.pumpWidget(const VoidApp());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Начать фокус'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Профиль'));
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.byType(VoidCalendarAccessCard));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(VoidCalendarAccessCard));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(VoidFocusCalendarScreen), findsOneWidget);
+    expect(find.text('Последние 30 дней'), findsWidgets);
+    expect(find.text('4 дня с фокусом'), findsOneWidget);
+    expect(find.byType(VoidFocusCalendar), findsOneWidget);
+    expect(find.text('Цель выполнена'), findsOneWidget);
+    expect(find.text('Был фокус'), findsOneWidget);
+    expect(find.text('Нет фокуса'), findsOneWidget);
+  });
+
   testWidgets('about app dialog shows version', (WidgetTester tester) async {
     await _openSettings(tester);
 
+    await tester.scrollUntilVisible(
+      find.text('О приложении'),
+      120,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
     await tester.tap(find.text('О приложении'));
     await tester.pumpAndSettle();
 
