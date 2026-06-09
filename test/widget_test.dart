@@ -24,8 +24,13 @@ void main() {
       'session_distractions_history': '[2,2,2,2,2,2,2,2]',
       'currentStreak': 5,
       'last_active_date': '2026-06-09',
-      'daily_activity':
-          '{"2026-06-03":15,"2026-06-05":25,"2026-06-07":30,"2026-06-09":25}',
+      'daily_activity': jsonEncode({
+        '2026-06-03': 15,
+        '2026-06-05': 25,
+        '2026-06-07': 30,
+        '2026-06-09': 25,
+        _todayActivityKey(): 25,
+      }),
     });
     await StatsService.instance.initialize(force: true);
     await StatsService.instance.load(force: true);
@@ -87,6 +92,39 @@ void main() {
       VoidFocusDayStatus.completed,
     );
     expect(StatsService.instance.data.last30Days.length, 30);
+  });
+
+  test('calendar month stats and longest streak use last 30 days', () {
+    final days = [
+      VoidDayActivity(
+        date: DateTime(2026, 6, 1),
+        focusSeconds: 600,
+        sessionsCount: 1,
+        distractions: 2,
+        averageFocusScore: 94,
+      ),
+      VoidDayActivity(
+        date: DateTime(2026, 6, 2),
+        focusSeconds: 1200,
+        sessionsCount: 2,
+        distractions: 0,
+        averageFocusScore: 100,
+      ),
+      VoidDayActivity(date: DateTime(2026, 6, 3), focusSeconds: 0),
+      VoidDayActivity(
+        date: DateTime(2026, 6, 4),
+        focusSeconds: 900,
+        sessionsCount: 1,
+        distractions: 1,
+        averageFocusScore: 97,
+      ),
+    ];
+
+    final stats = VoidCalendarMonthStats.fromDays(days);
+    expect(stats.activeDays, 3);
+    expect(stats.totalFocusSeconds, 2700);
+    expect(stats.longestStreak, 2);
+    expect(computeLongestActiveStreak(days), 2);
   });
 
   test('xp and level follow focus minute rules', () {
@@ -274,6 +312,9 @@ void main() {
     expect(find.text('Последние 7 дней активности'), findsOneWidget);
     expect(find.text('Календарь фокуса'), findsOneWidget);
     expect(find.text('Последние 30 дней'), findsOneWidget);
+    expect(find.text('Активные дни'), findsOneWidget);
+    expect(find.text('Всего фокуса'), findsWidgets);
+    expect(find.text('Лучшая серия'), findsOneWidget);
     expect(find.text('Цель выполнена'), findsOneWidget);
     expect(find.text('Был фокус'), findsOneWidget);
     expect(find.text('Нет фокуса'), findsOneWidget);
@@ -531,7 +572,7 @@ void main() {
     await tester.tap(find.text('Аналитика'));
     await tester.pumpAndSettle();
 
-    expect(find.text('21с'), findsOneWidget);
+    expect(find.text('21с'), findsNWidgets(2));
     expect(StatsService.instance.hasData, isTrue);
   });
 
@@ -572,7 +613,7 @@ void main() {
 
     expect(find.text('Всего сессий'), findsOneWidget);
     expect(find.text('Всего часов фокуса'), findsOneWidget);
-    expect(find.text('1м'), findsOneWidget);
+    expect(find.text('1м'), findsNWidgets(2));
     expect(StatsService.instance.hasData, isTrue);
   });
 
@@ -757,11 +798,48 @@ void main() {
 
     expect(find.byType(VoidFocusCalendarScreen), findsOneWidget);
     expect(find.text('Последние 30 дней'), findsWidgets);
-    expect(find.text('4 дня с фокусом'), findsOneWidget);
+    expect(find.text('Нажмите на день, чтобы увидеть детали'), findsOneWidget);
+    expect(find.text('4'), findsWidgets);
     expect(find.byType(VoidFocusCalendar), findsOneWidget);
+    expect(find.text('Активные дни'), findsOneWidget);
+    expect(find.text('Лучшая серия'), findsOneWidget);
     expect(find.text('Цель выполнена'), findsOneWidget);
     expect(find.text('Был фокус'), findsOneWidget);
     expect(find.text('Нет фокуса'), findsOneWidget);
+  });
+
+  testWidgets('tapping calendar day opens detail sheet', (WidgetTester tester) async {
+    await tester.pumpWidget(const VoidApp());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Начать фокус'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Профиль'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byType(VoidCalendarAccessCard));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(VoidCalendarAccessCard));
+    await tester.pumpAndSettle();
+
+    final dayFinder = find.byKey(
+      Key('calendar-day-${_todayActivityKey()}'),
+    );
+    await tester.scrollUntilVisible(
+      dayFinder,
+      120,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    final dayBox = tester.renderObject<RenderBox>(dayFinder);
+    final dayCenter = dayBox.localToGlobal(dayBox.size.center(Offset.zero));
+    await tester.tapAt(dayCenter);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Время фокуса'), findsOneWidget);
+    expect(find.text('Сессий завершено'), findsOneWidget);
+    expect(find.text('Фокус-счёт'), findsOneWidget);
+    expect(find.text('Отвлечения'), findsOneWidget);
+    expect(find.text('Сегодня'), findsOneWidget);
   });
 
   testWidgets('about app dialog shows version', (WidgetTester tester) async {

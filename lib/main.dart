@@ -34,6 +34,20 @@ const kVoidAppVersion = '1.0.0';
 const kVoidRuStoreUrl = 'https://www.rustore.ru/catalog/app/ru.voidapp.focus';
 
 const _kDayLabels = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+const _kMonthLabels = [
+  'января',
+  'февраля',
+  'марта',
+  'апреля',
+  'мая',
+  'июня',
+  'июля',
+  'августа',
+  'сентября',
+  'октября',
+  'ноября',
+  'декабря',
+];
 
 class VoidSessionRecord {
   const VoidSessionRecord({
@@ -105,17 +119,142 @@ class VoidDayActivity {
   const VoidDayActivity({
     required this.date,
     required this.focusSeconds,
+    this.sessionsCount = 0,
+    this.distractions = 0,
+    this.averageFocusScore = 0,
   });
 
   final DateTime date;
   final int focusSeconds;
+  final int sessionsCount;
+  final int distractions;
+  final double averageFocusScore;
 
   String get dayLabel => _kDayLabels[date.weekday - 1];
+
+  bool get hasActivity => focusSeconds > 0;
 
   VoidFocusDayStatus status(int goalMinutes) => resolveFocusDayStatus(
         focusSeconds: focusSeconds,
         goalMinutes: goalMinutes,
       );
+}
+
+class VoidCalendarMonthStats {
+  const VoidCalendarMonthStats({
+    required this.activeDays,
+    required this.totalFocusSeconds,
+    required this.longestStreak,
+  });
+
+  final int activeDays;
+  final int totalFocusSeconds;
+  final int longestStreak;
+
+  factory VoidCalendarMonthStats.fromDays(List<VoidDayActivity> days) {
+    return VoidCalendarMonthStats(
+      activeDays: days.where((day) => day.hasActivity).length,
+      totalFocusSeconds: days.fold<int>(
+        0,
+        (sum, day) => sum + day.focusSeconds,
+      ),
+      longestStreak: computeLongestActiveStreak(days),
+    );
+  }
+}
+
+int computeLongestActiveStreak(List<VoidDayActivity> days) {
+  var longest = 0;
+  var current = 0;
+  for (final day in days) {
+    if (day.hasActivity) {
+      current++;
+      if (current > longest) {
+        longest = current;
+      }
+    } else {
+      current = 0;
+    }
+  }
+  return longest;
+}
+
+Map<String, VoidDayActivity> aggregateDayActivityFromSessions(
+  List<VoidSessionRecord> history,
+) {
+  final aggregates = <String, _VoidDaySessionAggregate>{};
+  for (final session in history) {
+    final key = StatsService.dateKey(session.completedAt);
+    final aggregate = aggregates.putIfAbsent(
+      key,
+      () => const _VoidDaySessionAggregate(),
+    );
+    aggregates[key] = aggregate.copyWith(
+      sessionsCount: aggregate.sessionsCount + 1,
+      focusSeconds: aggregate.focusSeconds + session.focusSeconds,
+      distractions: aggregate.distractions + session.distractions,
+      focusScoreSum: aggregate.focusScoreSum + session.focusScore,
+    );
+  }
+
+  return aggregates.map(
+    (key, aggregate) => MapEntry(
+      key,
+      VoidDayActivity(
+        date: _parseDateKey(key),
+        focusSeconds: aggregate.focusSeconds,
+        sessionsCount: aggregate.sessionsCount,
+        distractions: aggregate.distractions,
+        averageFocusScore: aggregate.sessionsCount == 0
+            ? 0
+            : aggregate.focusScoreSum / aggregate.sessionsCount,
+      ),
+    ),
+  );
+}
+
+DateTime _parseDateKey(String key) {
+  final parts = key.split('-');
+  if (parts.length != 3) {
+    return DateTime.now();
+  }
+  return DateTime(
+    int.parse(parts[0]),
+    int.parse(parts[1]),
+    int.parse(parts[2]),
+  );
+}
+
+class _VoidDaySessionAggregate {
+  const _VoidDaySessionAggregate({
+    this.sessionsCount = 0,
+    this.focusSeconds = 0,
+    this.distractions = 0,
+    this.focusScoreSum = 0,
+  });
+
+  final int sessionsCount;
+  final int focusSeconds;
+  final int distractions;
+  final int focusScoreSum;
+
+  _VoidDaySessionAggregate copyWith({
+    int? sessionsCount,
+    int? focusSeconds,
+    int? distractions,
+    int? focusScoreSum,
+  }) {
+    return _VoidDaySessionAggregate(
+      sessionsCount: sessionsCount ?? this.sessionsCount,
+      focusSeconds: focusSeconds ?? this.focusSeconds,
+      distractions: distractions ?? this.distractions,
+      focusScoreSum: focusScoreSum ?? this.focusScoreSum,
+    );
+  }
+}
+
+String formatCalendarDayTitle(DateTime date) {
+  return '${date.day} ${_kMonthLabels[date.month - 1]}';
 }
 
 class VoidAchievement {
@@ -649,6 +788,8 @@ class StatsService extends ChangeNotifier {
     return prefs.getInt(_kTodaySessions) ?? 0;
   }
 
+  static String dateKey(DateTime date) => _dateKey(date);
+
   static String _dateKey(DateTime date) {
     final y = date.year.toString().padLeft(4, '0');
     final m = date.month.toString().padLeft(2, '0');
@@ -656,26 +797,39 @@ class StatsService extends ChangeNotifier {
     return '$y-$m-$d';
   }
 
-  static List<VoidDayActivity> _buildLast7Days(Map<String, int> activity) {
-    return _buildLastDays(activity, 7);
+  static List<VoidDayActivity> _buildLast7Days(
+    Map<String, int> activity, [
+    List<VoidSessionRecord> sessionHistory = const [],
+  ]) {
+    return _buildLastDays(activity, 7, sessionHistory);
   }
 
-  static List<VoidDayActivity> _buildLast30Days(Map<String, int> activity) {
-    return _buildLastDays(activity, kVoidFocusCalendarDays);
+  static List<VoidDayActivity> _buildLast30Days(
+    Map<String, int> activity, [
+    List<VoidSessionRecord> sessionHistory = const [],
+  ]) {
+    return _buildLastDays(activity, kVoidFocusCalendarDays, sessionHistory);
   }
 
   static List<VoidDayActivity> _buildLastDays(
     Map<String, int> activity,
     int dayCount,
+    List<VoidSessionRecord> sessionHistory,
   ) {
+    final sessionDays = aggregateDayActivityFromSessions(sessionHistory);
     final today = DateTime.now();
     return List<VoidDayActivity>.generate(dayCount, (index) {
       final date = DateTime(today.year, today.month, today.day)
           .subtract(Duration(days: dayCount - 1 - index));
       final key = _dateKey(date);
+      final sessionDay = sessionDays[key];
+      final focusSeconds = activity[key] ?? sessionDay?.focusSeconds ?? 0;
       return VoidDayActivity(
         date: date,
-        focusSeconds: activity[key] ?? 0,
+        focusSeconds: focusSeconds,
+        sessionsCount: sessionDay?.sessionsCount ?? 0,
+        distractions: sessionDay?.distractions ?? 0,
+        averageFocusScore: sessionDay?.averageFocusScore ?? 0,
       );
     });
   }
@@ -846,8 +1000,8 @@ class StatsService extends ChangeNotifier {
         todayFocusSeconds: todayFocusSeconds,
         dailyGoalMinutes: dailyGoalMinutes,
         averageFocusScore: averageFocusScore,
-        last7Days: _buildLast7Days(activity),
-        last30Days: _buildLast30Days(activity),
+        last7Days: _buildLast7Days(activity, sessionHistory),
+        last30Days: _buildLast30Days(activity, sessionHistory),
       );
 
     } finally {
@@ -1648,6 +1802,12 @@ class _VoidAnalyticsTabState extends State<VoidAnalyticsTab> {
                     SizedBox(height: m.gapM),
                     VoidActivityChart(days: analytics.last7Days),
                     SizedBox(height: m.gapM),
+                    VoidCalendarMonthStatsPanel(
+                      stats: VoidCalendarMonthStats.fromDays(
+                        analytics.last30Days,
+                      ),
+                    ),
+                    SizedBox(height: m.gapM),
                     VoidFocusCalendar(
                       days: analytics.last30Days,
                       goalMinutes: analytics.dailyGoalMinutes,
@@ -1876,13 +2036,7 @@ class _VoidFocusCalendarScreenState extends State<VoidFocusCalendarScreen> {
                 final focusDays = days
                     .where((day) => day.focusSeconds > 0)
                     .length;
-                final goalDays = days
-                    .where(
-                      (day) =>
-                          day.status(goalMinutes) ==
-                          VoidFocusDayStatus.completed,
-                    )
-                    .length;
+                final monthStats = VoidCalendarMonthStats.fromDays(days);
 
                 if (store.isLoading && days.every((day) => day.focusSeconds == 0)) {
                   return const Center(
@@ -1914,13 +2068,14 @@ class _VoidFocusCalendarScreenState extends State<VoidFocusCalendarScreen> {
                       Text(
                         focusDays == 0
                             ? 'Завершите сессию, чтобы увидеть активность'
-                            : '$focusDays ${_focusDaysLabel(focusDays)} с фокусом'
-                                '${goalDays > 0 ? ' · $goalDays ${_goalDaysLabel(goalDays)}' : ''}',
+                            : 'Нажмите на день, чтобы увидеть детали',
                         style: TextStyle(
                           fontSize: 11,
                           color: Colors.white.withValues(alpha: 0.3),
                         ),
                       ),
+                      SizedBox(height: m.gapM),
+                      VoidCalendarMonthStatsPanel(stats: monthStats),
                       SizedBox(height: m.gapM),
                       VoidFocusCalendar(
                         days: days,
@@ -1947,13 +2102,270 @@ class _VoidFocusCalendarScreenState extends State<VoidFocusCalendarScreen> {
     return 'дней';
   }
 
-  static String _goalDaysLabel(int count) {
-    final mod10 = count % 10;
-    final mod100 = count % 100;
-    if (mod100 >= 11 && mod100 <= 14) return 'целей';
-    if (mod10 == 1) return 'цель';
-    if (mod10 >= 2 && mod10 <= 4) return 'цели';
-    return 'целей';
+}
+
+void showVoidDayDetailSheet(
+  BuildContext context, {
+  required VoidDayActivity day,
+  required int goalMinutes,
+}) {
+  final isToday = day.date ==
+      DateTime(
+        DateTime.now().year,
+        DateTime.now().month,
+        DateTime.now().day,
+      );
+  final status = day.status(goalMinutes);
+
+  showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: const Color(0xFF12121A),
+    shape: RoundedRectangleBorder(
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+      side: BorderSide(color: kVoidAccent.withValues(alpha: 0.28)),
+    ),
+    builder: (sheetContext) {
+      return SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.18),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 18),
+              Row(
+                children: [
+                  Container(
+                    width: 14,
+                    height: 14,
+                    decoration: BoxDecoration(
+                      color: focusDayStatusColor(status),
+                      borderRadius: BorderRadius.circular(4),
+                      boxShadow: status == VoidFocusDayStatus.completed
+                          ? [
+                              BoxShadow(
+                                color:
+                                    kVoidGoalComplete.withValues(alpha: 0.45),
+                                blurRadius: 10,
+                              ),
+                            ]
+                          : null,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      formatCalendarDayTitle(day.date),
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.white.withValues(alpha: 0.95),
+                      ),
+                    ),
+                  ),
+                  if (isToday)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.35),
+                        ),
+                        color: Colors.white.withValues(alpha: 0.06),
+                      ),
+                      child: Text(
+                        'Сегодня',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: Colors.white.withValues(alpha: 0.72),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '${day.dayLabel} · ${status == VoidFocusDayStatus.completed ? 'Цель выполнена' : status == VoidFocusDayStatus.partial ? 'Был фокус' : 'Нет фокуса'}',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: Colors.white.withValues(alpha: 0.42),
+                ),
+              ),
+              const SizedBox(height: 18),
+              _VoidDayDetailMetric(
+                label: 'Время фокуса',
+                value: formatFocusDuration(day.focusSeconds),
+              ),
+              const SizedBox(height: 10),
+              _VoidDayDetailMetric(
+                label: 'Сессий завершено',
+                value: '${day.sessionsCount}',
+              ),
+              const SizedBox(height: 10),
+              _VoidDayDetailMetric(
+                label: 'Фокус-счёт',
+                value: day.sessionsCount > 0
+                    ? formatFocusScore(day.averageFocusScore)
+                    : '—',
+              ),
+              const SizedBox(height: 10),
+              _VoidDayDetailMetric(
+                label: 'Отвлечения',
+                value: '${day.distractions}',
+              ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+}
+
+class _VoidDayDetailMetric extends StatelessWidget {
+  const _VoidDayDetailMetric({
+    required this.label,
+    required this.value,
+  });
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: kVoidAccent.withValues(alpha: 0.16)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.white.withValues(alpha: 0.48),
+              ),
+            ),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: Colors.white.withValues(alpha: 0.92),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class VoidCalendarMonthStatsPanel extends StatelessWidget {
+  const VoidCalendarMonthStatsPanel({super.key, required this.stats});
+
+  final VoidCalendarMonthStats stats;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: kVoidAccent.withValues(alpha: 0.18)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _VoidCalendarMonthStatItem(
+              label: 'Активные дни',
+              value: '${stats.activeDays}',
+            ),
+          ),
+          Container(
+            width: 1,
+            height: 34,
+            color: Colors.white.withValues(alpha: 0.08),
+          ),
+          Expanded(
+            child: _VoidCalendarMonthStatItem(
+              label: 'Всего фокуса',
+              value: formatFocusDuration(stats.totalFocusSeconds),
+            ),
+          ),
+          Container(
+            width: 1,
+            height: 34,
+            color: Colors.white.withValues(alpha: 0.08),
+          ),
+          Expanded(
+            child: _VoidCalendarMonthStatItem(
+              label: 'Лучшая серия',
+              value: '${stats.longestStreak}',
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _VoidCalendarMonthStatItem extends StatelessWidget {
+  const _VoidCalendarMonthStatItem({
+    required this.label,
+    required this.value,
+  });
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      child: Column(
+        children: [
+          Text(
+            value,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: Colors.white.withValues(alpha: 0.92),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 9,
+              color: Colors.white.withValues(alpha: 0.38),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -2024,52 +2436,76 @@ class VoidFocusCalendar extends StatelessWidget {
               final day = days[index];
               final status = day.status(goalMinutes);
               final isToday = day.date == today;
+              final dayKey = StatsService.dateKey(day.date);
 
-              return Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: double.infinity,
-                    height: m.isCompact ? 24 : 28,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(7),
-                      color: focusDayStatusColor(status),
-                      border: isToday
-                          ? Border.all(
-                              color: Colors.white.withValues(alpha: 0.55),
-                              width: 1.2,
-                            )
-                          : null,
-                      boxShadow: status == VoidFocusDayStatus.completed
-                          ? [
-                              BoxShadow(
-                                color: kVoidGoalComplete.withValues(alpha: 0.22),
-                                blurRadius: 8,
-                              ),
-                            ]
-                          : status == VoidFocusDayStatus.partial
-                              ? [
-                                  BoxShadow(
-                                    color: kVoidAccent.withValues(alpha: 0.18),
-                                    blurRadius: 6,
-                                  ),
-                                ]
-                              : null,
+              return GestureDetector(
+                key: Key('calendar-day-$dayKey'),
+                behavior: HitTestBehavior.opaque,
+                onTap: () => showVoidDayDetailSheet(
+                  context,
+                  day: day,
+                  goalMinutes: goalMinutes,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: double.infinity,
+                      height: m.isCompact ? 24 : 28,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(7),
+                        color: focusDayStatusColor(status),
+                        border: isToday
+                            ? Border.all(
+                                color: Colors.white.withValues(alpha: 0.9),
+                                width: 1.5,
+                              )
+                            : null,
+                        boxShadow: [
+                          if (isToday) ...[
+                            BoxShadow(
+                              color: Colors.white.withValues(alpha: 0.42),
+                              blurRadius: 10,
+                              spreadRadius: 0.5,
+                            ),
+                            BoxShadow(
+                              color: kVoidAccent.withValues(alpha: 0.28),
+                              blurRadius: 14,
+                            ),
+                          ],
+                          if (status == VoidFocusDayStatus.completed) ...[
+                            BoxShadow(
+                              color: kVoidGoalComplete.withValues(alpha: 0.5),
+                              blurRadius: 12,
+                              spreadRadius: 0.5,
+                            ),
+                            BoxShadow(
+                              color: kVoidGoalComplete.withValues(alpha: 0.22),
+                              blurRadius: 18,
+                            ),
+                          ] else if (status == VoidFocusDayStatus.partial) ...[
+                            BoxShadow(
+                              color: kVoidAccent.withValues(alpha: 0.18),
+                              blurRadius: 6,
+                            ),
+                          ],
+                        ],
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 5),
-                  Text(
-                    '${day.date.day}',
-                    style: TextStyle(
-                      fontSize: 9,
-                      color: isToday
-                          ? Colors.white.withValues(alpha: 0.75)
-                          : Colors.white.withValues(alpha: 0.32),
-                      fontWeight:
-                          isToday ? FontWeight.w600 : FontWeight.w400,
+                    const SizedBox(height: 5),
+                    Text(
+                      '${day.date.day}',
+                      style: TextStyle(
+                        fontSize: 9,
+                        color: isToday
+                            ? Colors.white.withValues(alpha: 0.9)
+                            : Colors.white.withValues(alpha: 0.32),
+                        fontWeight:
+                            isToday ? FontWeight.w600 : FontWeight.w400,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               );
             },
           ),
