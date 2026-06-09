@@ -43,3 +43,8 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Android release signing (see android/RUSTORE_SIGNING.md)
+/android/key.properties
+**/*.keystore
+**/*.jks

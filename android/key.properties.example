@@ -1,0 +1,8 @@
+# Copy this file to android/key.properties and fill in your values.
+# Never commit key.properties or the keystore to git.
+
+storePassword=YOUR_KEYSTORE_PASSWORD
+keyPassword=YOUR_KEY_PASSWORD
+keyAlias=void-upload
+# Path is relative to android/app/ (where build.gradle.kts lives)
+storeFile=void-release.jks

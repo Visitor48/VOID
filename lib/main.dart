@@ -7,6 +7,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 const Color kVoidBackground = Color(0xFF07070A);
 const Color kVoidAccent = Color(0xFF8B5CF6);
+const Color kVoidGoalComplete = Color(0xFF34D399);
+const int kVoidFocusCalendarDays = 30;
 
 const _kCompletedSessions = 'completedSessions';
 const _kTotalFocusSeconds = 'totalFocusSeconds';
@@ -74,6 +76,28 @@ String formatSessionDateTime(DateTime dateTime) {
   return '$day.$month.$year · $hour:$minute';
 }
 
+enum VoidFocusDayStatus { none, partial, completed }
+
+VoidFocusDayStatus resolveFocusDayStatus({
+  required int focusSeconds,
+  required int goalMinutes,
+}) {
+  if (focusSeconds <= 0) return VoidFocusDayStatus.none;
+  if (focusSeconds >= goalMinutes * 60) return VoidFocusDayStatus.completed;
+  return VoidFocusDayStatus.partial;
+}
+
+Color focusDayStatusColor(VoidFocusDayStatus status) {
+  switch (status) {
+    case VoidFocusDayStatus.completed:
+      return kVoidGoalComplete;
+    case VoidFocusDayStatus.partial:
+      return kVoidAccent;
+    case VoidFocusDayStatus.none:
+      return Colors.white.withValues(alpha: 0.14);
+  }
+}
+
 class VoidDayActivity {
   const VoidDayActivity({
     required this.date,
@@ -84,6 +108,11 @@ class VoidDayActivity {
   final int focusSeconds;
 
   String get dayLabel => _kDayLabels[date.weekday - 1];
+
+  VoidFocusDayStatus status(int goalMinutes) => resolveFocusDayStatus(
+        focusSeconds: focusSeconds,
+        goalMinutes: goalMinutes,
+      );
 }
 
 class VoidAchievement {
@@ -169,6 +198,7 @@ class StatsData {
     required this.dailyGoalMinutes,
     required this.averageFocusScore,
     required this.last7Days,
+    required this.last30Days,
   });
 
   final int completedSessions;
@@ -184,12 +214,16 @@ class StatsData {
   final int dailyGoalMinutes;
   final double averageFocusScore;
   final List<VoidDayActivity> last7Days;
+  final List<VoidDayActivity> last30Days;
 
   int get todayFocusMinutes => todayFocusSeconds ~/ 60;
 
   double get dailyGoalProgress => dailyGoalMinutes <= 0
       ? 0
-      : (todayFocusMinutes / dailyGoalMinutes).clamp(0.0, 1.0);
+      : (todayFocusSeconds / (dailyGoalMinutes * 60)).clamp(0.0, 1.0);
+
+  bool get isDailyGoalCompleted =>
+      todayFocusSeconds >= dailyGoalMinutes * 60;
 
   int get unlockedAchievementsCount =>
       achievements.where((achievement) => achievement.isUnlocked).length;
@@ -216,11 +250,23 @@ class StatsData {
     dailyGoalMinutes: _kDefaultDailyGoalMinutes,
     averageFocusScore: 0,
     last7Days: [],
+    last30Days: [],
   );
 }
 
-String formatDailyGoalProgress(int todayMinutes, int goalMinutes) {
-  return '${todayMinutes}м / ${goalMinutes}м';
+String formatDailyGoalTodayDuration(int todayFocusSeconds) {
+  if (todayFocusSeconds <= 0) return '0с';
+  final minutes = todayFocusSeconds ~/ 60;
+  final seconds = todayFocusSeconds % 60;
+  if (minutes > 0) {
+    if (seconds > 0) return '${minutes}м ${seconds}с';
+    return '${minutes}м';
+  }
+  return '${seconds}с';
+}
+
+String formatDailyGoalProgress(int todayFocusSeconds, int goalMinutes) {
+  return '${formatDailyGoalTodayDuration(todayFocusSeconds)} / ${goalMinutes}м';
 }
 
 String formatAverageDistractions(double value) {
@@ -314,13 +360,9 @@ class StatsService extends ChangeNotifier {
   Future<void> _initializePrefs() async {
     try {
       _prefs = await SharedPreferences.getInstance();
-      print('Prefs initialized successfully');
-    } catch (e, stackTrace) {
+    } catch (_) {
       _prefs = null;
       _initFuture = null;
-      print('[StatsService] Prefs initialization failed: $e');
-      print(stackTrace);
-      rethrow;
     }
   }
 
@@ -328,9 +370,7 @@ class StatsService extends ChangeNotifier {
     try {
       await initialize();
       return _prefs;
-    } catch (e, stackTrace) {
-      print('[StatsService] SharedPreferences unavailable: $e');
-      print(stackTrace);
+    } catch (_) {
       return null;
     }
   }
@@ -354,6 +394,7 @@ class StatsService extends ChangeNotifier {
         dailyGoalMinutes: _kDefaultDailyGoalMinutes,
         averageFocusScore: 0,
         last7Days: _buildLast7Days({}),
+        last30Days: _buildLast30Days({}),
       );
 
   static double _computeAverageFocusScore({
@@ -525,10 +566,21 @@ class StatsService extends ChangeNotifier {
   }
 
   static List<VoidDayActivity> _buildLast7Days(Map<String, int> activity) {
+    return _buildLastDays(activity, 7);
+  }
+
+  static List<VoidDayActivity> _buildLast30Days(Map<String, int> activity) {
+    return _buildLastDays(activity, kVoidFocusCalendarDays);
+  }
+
+  static List<VoidDayActivity> _buildLastDays(
+    Map<String, int> activity,
+    int dayCount,
+  ) {
     final today = DateTime.now();
-    return List<VoidDayActivity>.generate(7, (index) {
+    return List<VoidDayActivity>.generate(dayCount, (index) {
       final date = DateTime(today.year, today.month, today.day)
-          .subtract(Duration(days: 6 - index));
+          .subtract(Duration(days: dayCount - 1 - index));
       final key = _dateKey(date);
       return VoidDayActivity(
         date: date,
@@ -678,13 +730,9 @@ class StatsService extends ChangeNotifier {
         dailyGoalMinutes: dailyGoalMinutes,
         averageFocusScore: averageFocusScore,
         last7Days: _buildLast7Days(activity),
+        last30Days: _buildLast30Days(activity),
       );
 
-      print('Loaded sessions: $completedSessions');
-      print(
-        '[StatsService] Loaded: totalFocusSeconds=$totalFocusSeconds, '
-        'currentStreak=$currentStreak, todaySessions=$todaySessions',
-      );
     } finally {
       isLoading = false;
       notifyListeners();
@@ -760,16 +808,7 @@ class StatsService extends ChangeNotifier {
 
       await _syncSessionHistory(prefs);
 
-      print('Saved sessions: $completedSessions');
-      print(
-        '[StatsService] Saved: focusSeconds=$focusSeconds, '
-        'sessionDistractions=$sessionDistractions, '
-        'totalFocusSeconds=$totalFocusSeconds, '
-        'currentStreak=$streak, todaySessions=$todaySessions',
-      );
-    } catch (e, stackTrace) {
-      print('[StatsService] Save failed: $e');
-      print(stackTrace);
+    } catch (_) {
       return false;
     }
 
@@ -799,9 +838,7 @@ class StatsService extends ChangeNotifier {
       await prefs.setString(_kSessionHistory, jsonEncode([]));
       await prefs.setString(_kSessionFocusSecondsHistory, jsonEncode([]));
       await prefs.setBool(_kSessionHistoryManuallyCleared, false);
-    } catch (e, stackTrace) {
-      print('[StatsService] resetAllStats failed: $e');
-      print(stackTrace);
+    } catch (_) {
       return false;
     }
 
@@ -822,9 +859,7 @@ class StatsService extends ChangeNotifier {
       await prefs.setString(_kSessionDistractionsHistory, jsonEncode([]));
       await prefs.setString(_kSessionFocusSecondsHistory, jsonEncode([]));
       await prefs.setBool(_kSessionHistoryManuallyCleared, true);
-    } catch (e, stackTrace) {
-      print('[StatsService] clearSessionHistory failed: $e');
-      print(stackTrace);
+    } catch (_) {
       return false;
     }
 
@@ -858,6 +893,18 @@ class StatsService extends ChangeNotifier {
             (day) => {
               'date': _dateKey(day.date),
               'focusSeconds': day.focusSeconds,
+            },
+          )
+          .toList(),
+      'last30Days': stats.last30Days
+          .map(
+            (day) => {
+              'date': _dateKey(day.date),
+              'focusSeconds': day.focusSeconds,
+              'status': resolveFocusDayStatus(
+                focusSeconds: day.focusSeconds,
+                goalMinutes: stats.dailyGoalMinutes,
+              ).name,
             },
           )
           .toList(),
@@ -951,7 +998,11 @@ class VoidMetrics {
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await StatsService.instance.initialize();
+  await StatsService.instance.initialize().catchError((_) {});
+  SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+    DeviceOrientation.portraitDown,
+  ]);
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -1324,7 +1375,7 @@ class _VoidHomeTabState extends State<VoidHomeTab> {
                           ),
                           SizedBox(height: m.gapL),
                           VoidDailyGoalCard(
-                            todayMinutes: analytics.todayFocusMinutes,
+                            todayFocusSeconds: analytics.todayFocusSeconds,
                             goalMinutes: analytics.dailyGoalMinutes,
                             progress: analytics.dailyGoalProgress,
                           ),
@@ -1474,6 +1525,11 @@ class _VoidAnalyticsTabState extends State<VoidAnalyticsTab> {
                     ),
                     SizedBox(height: m.gapM),
                     VoidActivityChart(days: analytics.last7Days),
+                    SizedBox(height: m.gapM),
+                    VoidFocusCalendar(
+                      days: analytics.last30Days,
+                      goalMinutes: analytics.dailyGoalMinutes,
+                    ),
                     SizedBox(height: m.gapM),
                   ],
                 ],
@@ -1638,6 +1694,187 @@ class VoidActivityChart extends StatelessWidget {
     const minHeight = 4.0;
     if (seconds <= 0 || maxSeconds <= 0) return minHeight;
     return minHeight + (seconds / maxSeconds) * (maxBarHeight - minHeight);
+  }
+}
+
+class VoidFocusCalendar extends StatelessWidget {
+  const VoidFocusCalendar({
+    super.key,
+    required this.days,
+    required this.goalMinutes,
+  });
+
+  final List<VoidDayActivity> days;
+  final int goalMinutes;
+
+  @override
+  Widget build(BuildContext context) {
+    final m = VoidMetrics.of(context);
+    final today = DateTime(
+      DateTime.now().year,
+      DateTime.now().month,
+      DateTime.now().day,
+    );
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.symmetric(
+        horizontal: 16,
+        vertical: m.isCompact ? 16 : 20,
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: kVoidAccent.withValues(alpha: 0.15)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Календарь фокуса',
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.white.withValues(alpha: 0.45),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Последние 30 дней',
+            style: TextStyle(
+              fontSize: 11,
+              color: Colors.white.withValues(alpha: 0.28),
+            ),
+          ),
+          SizedBox(height: m.gapM),
+          GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: days.length,
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 6,
+              mainAxisSpacing: 10,
+              crossAxisSpacing: 10,
+              childAspectRatio: 0.82,
+            ),
+            itemBuilder: (context, index) {
+              final day = days[index];
+              final status = day.status(goalMinutes);
+              final isToday = day.date == today;
+
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: double.infinity,
+                    height: m.isCompact ? 24 : 28,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(7),
+                      color: focusDayStatusColor(status),
+                      border: isToday
+                          ? Border.all(
+                              color: Colors.white.withValues(alpha: 0.55),
+                              width: 1.2,
+                            )
+                          : null,
+                      boxShadow: status == VoidFocusDayStatus.completed
+                          ? [
+                              BoxShadow(
+                                color: kVoidGoalComplete.withValues(alpha: 0.22),
+                                blurRadius: 8,
+                              ),
+                            ]
+                          : status == VoidFocusDayStatus.partial
+                              ? [
+                                  BoxShadow(
+                                    color: kVoidAccent.withValues(alpha: 0.18),
+                                    blurRadius: 6,
+                                  ),
+                                ]
+                              : null,
+                    ),
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    '${day.date.day}',
+                    style: TextStyle(
+                      fontSize: 9,
+                      color: isToday
+                          ? Colors.white.withValues(alpha: 0.75)
+                          : Colors.white.withValues(alpha: 0.32),
+                      fontWeight:
+                          isToday ? FontWeight.w600 : FontWeight.w400,
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+          SizedBox(height: m.gapM),
+          const _VoidFocusCalendarLegend(),
+        ],
+      ),
+    );
+  }
+}
+
+class _VoidFocusCalendarLegend extends StatelessWidget {
+  const _VoidFocusCalendarLegend();
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 14,
+      runSpacing: 8,
+      children: const [
+        _VoidFocusCalendarLegendItem(
+          color: kVoidGoalComplete,
+          label: 'Цель выполнена',
+        ),
+        _VoidFocusCalendarLegendItem(
+          color: kVoidAccent,
+          label: 'Был фокус',
+        ),
+        _VoidFocusCalendarLegendItem(
+          color: Color(0x24FFFFFF),
+          label: 'Нет фокуса',
+        ),
+      ],
+    );
+  }
+}
+
+class _VoidFocusCalendarLegendItem extends StatelessWidget {
+  const _VoidFocusCalendarLegendItem({
+    required this.color,
+    required this.label,
+  });
+
+  final Color color;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(3),
+          ),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 10,
+            color: Colors.white.withValues(alpha: 0.42),
+          ),
+        ),
+      ],
+    );
   }
 }
 
@@ -2588,11 +2825,6 @@ class _VoidFocusTabState extends State<VoidFocusTab> {
     });
     HapticFeedback.mediumImpact();
 
-    print(
-      '[FocusSession] actualSeconds=$focusSeconds '
-      '(remaining=$remaining, elapsed=$elapsedSeconds)',
-    );
-
     await StatsService.instance.completeSession(
       focusSeconds: focusSeconds,
       sessionDistractions: distractions,
@@ -3490,14 +3722,16 @@ class VoidAchievementCard extends StatelessWidget {
 class VoidDailyGoalCard extends StatefulWidget {
   const VoidDailyGoalCard({
     super.key,
-    required this.todayMinutes,
+    required this.todayFocusSeconds,
     required this.goalMinutes,
     required this.progress,
   });
 
-  final int todayMinutes;
+  final int todayFocusSeconds;
   final int goalMinutes;
   final double progress;
+
+  int get _goalSeconds => goalMinutes * 60;
 
   @override
   State<VoidDailyGoalCard> createState() => _VoidDailyGoalCardState();
@@ -3514,7 +3748,7 @@ class _VoidDailyGoalCardState extends State<VoidDailyGoalCard>
   @override
   void initState() {
     super.initState();
-    _wasCompleted = widget.todayMinutes >= widget.goalMinutes;
+    _wasCompleted = widget.todayFocusSeconds >= widget._goalSeconds;
     _celebrationController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1400),
@@ -3554,7 +3788,7 @@ class _VoidDailyGoalCardState extends State<VoidDailyGoalCard>
   @override
   void didUpdateWidget(VoidDailyGoalCard oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final completed = widget.todayMinutes >= widget.goalMinutes;
+    final completed = widget.todayFocusSeconds >= widget._goalSeconds;
     if (completed && !_wasCompleted) {
       _celebrationController.forward(from: 0);
     }
@@ -3569,7 +3803,7 @@ class _VoidDailyGoalCardState extends State<VoidDailyGoalCard>
 
   @override
   Widget build(BuildContext context) {
-    final completed = widget.todayMinutes >= widget.goalMinutes;
+    final completed = widget.todayFocusSeconds >= widget._goalSeconds;
     final glowBoost = _glowAnimation.value;
 
     return AnimatedBuilder(
@@ -3636,7 +3870,7 @@ class _VoidDailyGoalCardState extends State<VoidDailyGoalCard>
                 const SizedBox(height: 8),
                 Text(
                   formatDailyGoalProgress(
-                    widget.todayMinutes,
+                    widget.todayFocusSeconds,
                     widget.goalMinutes,
                   ),
                   style: TextStyle(

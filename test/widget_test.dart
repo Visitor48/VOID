@@ -70,6 +70,22 @@ void main() {
     );
   });
 
+  test('focus calendar resolves day status from activity', () {
+    expect(
+      resolveFocusDayStatus(focusSeconds: 0, goalMinutes: 60),
+      VoidFocusDayStatus.none,
+    );
+    expect(
+      resolveFocusDayStatus(focusSeconds: 900, goalMinutes: 60),
+      VoidFocusDayStatus.partial,
+    );
+    expect(
+      resolveFocusDayStatus(focusSeconds: 3600, goalMinutes: 60),
+      VoidFocusDayStatus.completed,
+    );
+    expect(StatsService.instance.data.last30Days.length, 30);
+  });
+
   test('xp and level follow focus minute rules', () {
     expect(computeSessionXp(60, 0), 1);
     expect(computeSessionXp(21, 0), 0);
@@ -91,9 +107,13 @@ void main() {
     expect(computeFocusScore(100), 0);
   });
 
-  test('formatDailyGoalProgress formats minutes', () {
-    expect(formatDailyGoalProgress(54, 60), '54м / 60м');
-    expect(formatDailyGoalProgress(0, 60), '0м / 60м');
+  test('formatDailyGoalProgress formats today duration with seconds', () {
+    expect(formatDailyGoalProgress(1380, 60), '23м / 60м');
+    expect(formatDailyGoalProgress(175, 60), '2м 55с / 60м');
+    expect(formatDailyGoalProgress(3240, 60), '54м / 60м');
+    expect(formatDailyGoalProgress(3600, 60), '60м / 60м');
+    expect(formatDailyGoalProgress(0, 60), '0с / 60м');
+    expect(formatDailyGoalProgress(21, 60), '21с / 60м');
   });
 
   test('today focus resets automatically for a new day', () async {
@@ -146,7 +166,7 @@ void main() {
     expect(find.text('Сегодня:'), findsOneWidget);
     expect(find.text('54м / 60м'), findsOneWidget);
     expect(StatsService.instance.data.dailyGoalMinutes, 60);
-    expect(StatsService.instance.data.todayFocusMinutes, 54);
+    expect(StatsService.instance.data.todayFocusSeconds, 3240);
     expect(StatsService.instance.data.dailyGoalProgress, closeTo(0.9, 0.01));
   });
 
@@ -168,6 +188,30 @@ void main() {
 
     expect(find.text('60м / 60м'), findsOneWidget);
     expect(find.text('Выполнено'), findsOneWidget);
+    expect(StatsService.instance.data.isDailyGoalCompleted, isTrue);
+  });
+
+  testWidgets('daily goal shows seconds in progress text', (
+    WidgetTester tester,
+  ) async {
+    final todayKey = _todayActivityKey();
+    SharedPreferences.setMockInitialValues({
+      'daily_activity': '{"$todayKey":175}',
+      'focus_data_uses_seconds': true,
+    });
+    await StatsService.instance.initialize(force: true);
+    await StatsService.instance.load(force: true);
+
+    await tester.pumpWidget(const VoidApp());
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Начать фокус'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('2м 55с / 60м'), findsOneWidget);
+    expect(
+      StatsService.instance.data.dailyGoalProgress,
+      closeTo(175 / 3600, 0.001),
+    );
   });
 
   testWidgets('Начать фокус navigates to home screen', (WidgetTester tester) async {
@@ -200,7 +244,7 @@ void main() {
     await tester.tap(find.text('Аналитика'));
     await tester.pumpAndSettle();
     expect(find.text('Всего сессий'), findsOneWidget);
-    expect(find.text('8'), findsOneWidget);
+    expect(find.text('8'), findsWidgets);
     expect(find.text('Всего часов фокуса'), findsOneWidget);
     expect(find.text('3ч 20м'), findsOneWidget);
     expect(find.text('Текущая серия дней'), findsOneWidget);
@@ -210,6 +254,12 @@ void main() {
     expect(find.text('98'), findsWidgets);
     expect(find.text('2'), findsWidgets);
     expect(find.text('Последние 7 дней активности'), findsOneWidget);
+    expect(find.text('Календарь фокуса'), findsOneWidget);
+    expect(find.text('Последние 30 дней'), findsOneWidget);
+    expect(find.text('Цель выполнена'), findsOneWidget);
+    expect(find.text('Был фокус'), findsOneWidget);
+    expect(find.text('Нет фокуса'), findsOneWidget);
+    expect(find.byType(VoidFocusCalendar), findsOneWidget);
 
     await tester.tap(find.text('Профиль'));
     await tester.pumpAndSettle();

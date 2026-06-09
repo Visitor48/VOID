@@ -1,4 +1,4 @@
-package com.example.void_app
+package ru.voidapp.focus
 
 import io.flutter.embedding.android.FlutterActivity
 
