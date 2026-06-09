@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -491,5 +493,104 @@ void main() {
     expect(find.text('Сессия завершена'), findsOneWidget);
     expect(find.text('25м'), findsWidgets);
     expect(StatsService.instance.data.totalFocusSeconds, 1500);
+  });
+
+  Future<void> _openSettings(WidgetTester tester) async {
+    await tester.pumpWidget(const VoidApp());
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Начать фокус'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Профиль'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Настройки'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Настройки'));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('settings screen renders all options', (WidgetTester tester) async {
+    await _openSettings(tester);
+
+    expect(find.text('Сбросить статистику'), findsOneWidget);
+    expect(find.text('Очистить историю сессий'), findsOneWidget);
+    expect(find.text('Экспорт данных'), findsOneWidget);
+    expect(find.text('О приложении'), findsOneWidget);
+  });
+
+  testWidgets('reset statistics clears stats after confirmation', (WidgetTester tester) async {
+    await _openSettings(tester);
+
+    await tester.tap(find.text('Сбросить статистику'));
+    await tester.pumpAndSettle();
+    expect(find.text('Сбросить статистику?'), findsOneWidget);
+
+    await tester.tap(find.text('Сбросить'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Статистика сброшена'), findsOneWidget);
+    expect(StatsService.instance.data.completedSessions, 0);
+    expect(StatsService.instance.data.totalFocusSeconds, 0);
+    expect(StatsService.instance.data.currentStreak, 0);
+    expect(StatsService.instance.data.dailyGoalMinutes, 60);
+  });
+
+  testWidgets('clear session history keeps aggregate stats', (WidgetTester tester) async {
+    await _openSettings(tester);
+
+    await tester.tap(find.text('Очистить историю сессий'));
+    await tester.pumpAndSettle();
+    expect(find.text('Очистить историю?'), findsOneWidget);
+
+    await tester.tap(find.text('Очистить'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('История сессий очищена'), findsOneWidget);
+    expect(StatsService.instance.data.completedSessions, 8);
+    expect(StatsService.instance.data.totalFocusSeconds, 12000);
+    expect(StatsService.instance.data.sessionHistory, isEmpty);
+  });
+
+  test('exportData returns JSON with stats', () async {
+    final json = await StatsService.instance.exportData();
+    final decoded = jsonDecode(json) as Map<String, dynamic>;
+    expect(decoded['completedSessions'], 8);
+    expect(decoded['totalFocusSeconds'], 12000);
+    expect(decoded['appVersion'], '1.0.0');
+    expect(decoded['sessionHistory'], isA<List<dynamic>>());
+  });
+
+  test('resetAllStats clears counters but keeps daily goal', () async {
+    expect(await StatsService.instance.resetAllStats(), isTrue);
+    expect(StatsService.instance.data.completedSessions, 0);
+    expect(StatsService.instance.data.totalFocusSeconds, 0);
+    expect(StatsService.instance.data.dailyGoalMinutes, 60);
+  });
+
+  test('clearSessionHistory empties history but keeps totals', () async {
+    expect(await StatsService.instance.clearSessionHistory(), isTrue);
+    expect(StatsService.instance.data.sessionHistory, isEmpty);
+    expect(StatsService.instance.data.completedSessions, 8);
+    expect(StatsService.instance.data.totalFocusSeconds, 12000);
+  });
+
+  testWidgets('export data action completes without error', (WidgetTester tester) async {
+    await _openSettings(tester);
+    await tester.tap(find.text('Экспорт данных'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    final json = await StatsService.instance.exportData();
+    expect(json, contains('"completedSessions"'));
+  });
+
+  testWidgets('about app dialog shows version', (WidgetTester tester) async {
+    await _openSettings(tester);
+
+    await tester.tap(find.text('О приложении'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('VOID'), findsWidgets);
+    expect(find.text('v1.0.0'), findsOneWidget);
+    expect(find.text('Закрыть'), findsOneWidget);
   });
 }

@@ -22,8 +22,10 @@ const _kSessionDistractionsHistory = 'session_distractions_history';
 const _kPreventedDistractionMinutes = 'prevented_distraction_minutes';
 const _kSessionHistory = 'session_history';
 const _kSessionFocusSecondsHistory = 'session_focus_seconds_history';
+const _kSessionHistoryManuallyCleared = 'session_history_manually_cleared';
 const _kDailyGoalMinutes = 'daily_goal_minutes';
 const _kDefaultDailyGoalMinutes = 60;
+const kVoidAppVersion = '1.0.0';
 
 const _kDayLabels = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 
@@ -444,6 +446,9 @@ class StatsService extends ChangeNotifier {
   static Future<List<VoidSessionRecord>> _syncSessionHistory(
     SharedPreferences prefs,
   ) async {
+    if (prefs.getBool(_kSessionHistoryManuallyCleared) == true) {
+      return [];
+    }
     final rebuilt = _buildFullSessionHistory(prefs);
     await prefs.setString(
       _kSessionHistory,
@@ -726,6 +731,7 @@ class StatsService extends ChangeNotifier {
         _kSessionFocusSecondsHistory,
         jsonEncode(sessionFocusSecondsHistory),
       );
+      await prefs.setBool(_kSessionHistoryManuallyCleared, false);
 
       if (sessionDistractions == 0 && focusSeconds > 0) {
         final preventedMinutes =
@@ -752,6 +758,101 @@ class StatsService extends ChangeNotifier {
     _loadFuture = null;
     await _loadInternal();
     return true;
+  }
+
+  Future<bool> resetAllStats() async {
+    await initialize();
+    final prefs = await _requirePrefs();
+    if (prefs == null) {
+      return false;
+    }
+
+    try {
+      await prefs.setInt(_kCompletedSessions, 0);
+      await prefs.setInt(_kTotalFocusSeconds, 0);
+      await prefs.setInt(_kCurrentStreak, 0);
+      await prefs.remove(_kLastActiveDate);
+      await prefs.setString(_kDailyActivity, jsonEncode({}));
+      await prefs.remove(_kTodaySessionsDate);
+      await prefs.setInt(_kTodaySessions, 0);
+      await prefs.setInt(_kTotalDistractions, 0);
+      await prefs.setString(_kSessionDistractionsHistory, jsonEncode([]));
+      await prefs.setInt(_kPreventedDistractionMinutes, 0);
+      await prefs.setString(_kSessionHistory, jsonEncode([]));
+      await prefs.setString(_kSessionFocusSecondsHistory, jsonEncode([]));
+      await prefs.setBool(_kSessionHistoryManuallyCleared, false);
+    } catch (e, stackTrace) {
+      print('[StatsService] resetAllStats failed: $e');
+      print(stackTrace);
+      return false;
+    }
+
+    _loadFuture = null;
+    await _loadInternal();
+    return true;
+  }
+
+  Future<bool> clearSessionHistory() async {
+    await initialize();
+    final prefs = await _requirePrefs();
+    if (prefs == null) {
+      return false;
+    }
+
+    try {
+      await prefs.setString(_kSessionHistory, jsonEncode([]));
+      await prefs.setString(_kSessionDistractionsHistory, jsonEncode([]));
+      await prefs.setString(_kSessionFocusSecondsHistory, jsonEncode([]));
+      await prefs.setBool(_kSessionHistoryManuallyCleared, true);
+    } catch (e, stackTrace) {
+      print('[StatsService] clearSessionHistory failed: $e');
+      print(stackTrace);
+      return false;
+    }
+
+    _loadFuture = null;
+    await _loadInternal();
+    return true;
+  }
+
+  Future<String> exportData() async {
+    await load();
+    final stats = data;
+    final export = {
+      'exportedAt': DateTime.now().toIso8601String(),
+      'appVersion': kVoidAppVersion,
+      'completedSessions': stats.completedSessions,
+      'totalFocusSeconds': stats.totalFocusSeconds,
+      'currentStreak': stats.currentStreak,
+      'todaySessions': stats.todaySessions,
+      'totalDistractions': stats.distractions,
+      'averageDistractionsPerSession': stats.averageDistractionsPerSession,
+      'preventedDistractionMinutes': stats.preventedDistractionMinutes,
+      'todayFocusSeconds': stats.todayFocusSeconds,
+      'dailyGoalMinutes': stats.dailyGoalMinutes,
+      'averageFocusScore': stats.averageFocusScore,
+      'unlockedAchievementsCount': stats.unlockedAchievementsCount,
+      'last7Days': stats.last7Days
+          .map(
+            (day) => {
+              'date': _dateKey(day.date),
+              'focusSeconds': day.focusSeconds,
+            },
+          )
+          .toList(),
+      'sessionHistory':
+          stats.sessionHistory.map((session) => session.toJson()).toList(),
+      'achievements': stats.achievements
+          .map(
+            (achievement) => {
+              'id': achievement.id,
+              'title': achievement.title,
+              'isUnlocked': achievement.isUnlocked,
+            },
+          )
+          .toList(),
+    };
+    return const JsonEncoder.withIndent('  ').convert(export);
   }
 }
 
@@ -1623,6 +1724,17 @@ class _VoidProfileTabState extends State<VoidProfileTab> {
                       unlockedCount: stats.unlockedAchievementsCount,
                     ),
                     SizedBox(height: m.gapM),
+                    VoidSettingsAccessCard(
+                      onTap: () {
+                        Navigator.push<void>(
+                          context,
+                          MaterialPageRoute<void>(
+                            builder: (_) => const VoidSettingsScreen(),
+                          ),
+                        );
+                      },
+                    ),
+                    SizedBox(height: m.gapM),
                   ],
                 ),
               );
@@ -1719,6 +1831,419 @@ class VoidHistoryAccessCard extends StatelessWidget {
     if (mod10 == 1) return 'сессия';
     if (mod10 >= 2 && mod10 <= 4) return 'сессии';
     return 'сессий';
+  }
+}
+
+class VoidSettingsAccessCard extends StatelessWidget {
+  const VoidSettingsAccessCard({super.key, required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Ink(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.04),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: kVoidAccent.withValues(alpha: 0.25)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: kVoidAccent.withValues(alpha: 0.16),
+                  border: Border.all(color: kVoidAccent.withValues(alpha: 0.35)),
+                ),
+                child: Icon(
+                  Icons.settings_rounded,
+                  size: 20,
+                  color: kVoidAccent.withValues(alpha: 0.9),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Настройки',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.white.withValues(alpha: 0.92),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Данные, экспорт и информация',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.white.withValues(alpha: 0.45),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.chevron_right_rounded,
+                color: kVoidAccent.withValues(alpha: 0.75),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class VoidSettingsScreen extends StatelessWidget {
+  const VoidSettingsScreen({super.key});
+
+  Future<void> _confirmAction({
+    required BuildContext context,
+    required String title,
+    required String message,
+    required String confirmLabel,
+    required Future<bool> Function() onConfirm,
+    required String successMessage,
+  }) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF12121A),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: kVoidAccent.withValues(alpha: 0.3)),
+        ),
+        title: Text(
+          title,
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.95),
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        content: Text(
+          message,
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.65),
+            height: 1.4,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(
+              'Отмена',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.55)),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(
+              confirmLabel,
+              style: const TextStyle(color: kVoidAccent),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !context.mounted) return;
+
+    final success = await onConfirm();
+    if (!context.mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: const Color(0xFF12121A),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(color: kVoidAccent.withValues(alpha: 0.25)),
+        ),
+        content: Text(
+          success ? successMessage : 'Не удалось выполнить действие',
+          style: TextStyle(color: Colors.white.withValues(alpha: 0.9)),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _exportData(BuildContext context) async {
+    final json = await StatsService.instance.exportData();
+    try {
+      await Clipboard.setData(ClipboardData(text: json));
+    } catch (_) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFF12121A),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(color: kVoidAccent.withValues(alpha: 0.25)),
+          ),
+          content: Text(
+            'Не удалось скопировать данные',
+            style: TextStyle(color: Colors.white.withValues(alpha: 0.9)),
+          ),
+        ),
+      );
+      return;
+    }
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: const Color(0xFF12121A),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(color: kVoidAccent.withValues(alpha: 0.25)),
+        ),
+        content: Text(
+          'Данные скопированы в буфер обмена',
+          style: TextStyle(color: Colors.white.withValues(alpha: 0.9)),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showAboutDialog(BuildContext context) async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF12121A),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: kVoidAccent.withValues(alpha: 0.3)),
+        ),
+        title: Column(
+          children: [
+            Text(
+              'VOID',
+              style: TextStyle(
+                color: kVoidAccent,
+                fontWeight: FontWeight.w300,
+                letterSpacing: 8,
+                fontSize: 28,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'v$kVoidAppVersion',
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.45),
+                fontSize: 12,
+                fontWeight: FontWeight.w400,
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          'Приложение для глубокого фокуса и контроля внимания. '
+          'Отслеживайте сессии, серии и прогресс без лишнего шума.',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.65),
+            height: 1.5,
+          ),
+        ),
+        actionsAlignment: MainAxisAlignment.center,
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text(
+              'Закрыть',
+              style: TextStyle(color: kVoidAccent),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final m = VoidMetrics.of(context);
+
+    return Scaffold(
+      backgroundColor: kVoidBackground,
+      appBar: AppBar(
+        backgroundColor: kVoidBackground,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        leading: IconButton(
+          icon: Icon(
+            Icons.arrow_back_ios_new_rounded,
+            color: Colors.white.withValues(alpha: 0.8),
+            size: 20,
+          ),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: Text(
+          'Настройки',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w400,
+            color: Colors.white.withValues(alpha: 0.95),
+          ),
+        ),
+        centerTitle: true,
+      ),
+      body: Stack(
+        children: [
+          const VoidAmbientGlow(center: Alignment(0, -0.55)),
+          SafeArea(
+            child: Padding(
+              padding: EdgeInsets.symmetric(horizontal: m.paddingH),
+              child: ListView(
+                physics: const BouncingScrollPhysics(),
+                padding: EdgeInsets.only(top: m.gapS, bottom: m.gapL),
+                children: [
+                  VoidSettingsOptionTile(
+                    icon: Icons.restart_alt_rounded,
+                    title: 'Сбросить статистику',
+                    subtitle: 'Обнулить сессии, фокус, серию и достижения',
+                    onTap: () => _confirmAction(
+                      context: context,
+                      title: 'Сбросить статистику?',
+                      message:
+                          'Все данные статистики будут удалены без возможности восстановления. '
+                          'Цель дня останется без изменений.',
+                      confirmLabel: 'Сбросить',
+                      onConfirm: StatsService.instance.resetAllStats,
+                      successMessage: 'Статистика сброшена',
+                    ),
+                  ),
+                  SizedBox(height: m.gapS),
+                  VoidSettingsOptionTile(
+                    icon: Icons.delete_outline_rounded,
+                    title: 'Очистить историю сессий',
+                    subtitle: 'Удалить записи истории, сохранив общие показатели',
+                    onTap: () => _confirmAction(
+                      context: context,
+                      title: 'Очистить историю?',
+                      message:
+                          'Список завершённых сессий будет удалён. '
+                          'Общая статистика и достижения сохранятся.',
+                      confirmLabel: 'Очистить',
+                      onConfirm: StatsService.instance.clearSessionHistory,
+                      successMessage: 'История сессий очищена',
+                    ),
+                  ),
+                  SizedBox(height: m.gapS),
+                  VoidSettingsOptionTile(
+                    icon: Icons.upload_rounded,
+                    title: 'Экспорт данных',
+                    subtitle: 'Скопировать статистику в буфер обмена (JSON)',
+                    onTap: () => _exportData(context),
+                  ),
+                  SizedBox(height: m.gapS),
+                  VoidSettingsOptionTile(
+                    icon: Icons.info_outline_rounded,
+                    title: 'О приложении',
+                    subtitle: 'VOID v$kVoidAppVersion',
+                    onTap: () => _showAboutDialog(context),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class VoidSettingsOptionTile extends StatelessWidget {
+  const VoidSettingsOptionTile({
+    super.key,
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Ink(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.04),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: kVoidAccent.withValues(alpha: 0.18)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: kVoidAccent.withValues(alpha: 0.12),
+                  border: Border.all(color: kVoidAccent.withValues(alpha: 0.28)),
+                ),
+                child: Icon(
+                  icon,
+                  size: 20,
+                  color: kVoidAccent.withValues(alpha: 0.85),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.white.withValues(alpha: 0.92),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        fontSize: 11,
+                        height: 1.3,
+                        color: Colors.white.withValues(alpha: 0.45),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.chevron_right_rounded,
+                color: kVoidAccent.withValues(alpha: 0.55),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
