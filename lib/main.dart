@@ -4,7 +4,11 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:timezone/data/latest.dart' as tz_data;
+import 'package:timezone/timezone.dart' as tz;
 import 'package:url_launcher/url_launcher.dart';
 
 const Color kVoidBackground = Color(0xFF07070A);
@@ -30,9 +34,148 @@ const _kSessionFocusSecondsHistory = 'session_focus_seconds_history';
 const _kSessionHistoryManuallyCleared = 'session_history_manually_cleared';
 const _kDailyGoalMinutes = 'daily_goal_minutes';
 const _kDailyGoalAchieved = 'daily_goal_achieved';
+const _kFirstLaunchFeedbackShown = 'first_launch_feedback_shown';
+const _kVoidTasks = 'void_tasks';
+const _kVoidProjects = 'void_projects';
+const _kActiveTaskId = 'void_active_task_id';
+const _kActiveTaskTitle = 'void_active_task_title';
+const kDefaultTaskEstimatedSessions = 5;
+const kDefaultProjectColorValue = 0xFF8B5CF6;
+const kDefaultProjectIconName = 'study';
+
+class VoidProjectTemplate {
+  const VoidProjectTemplate({
+    required this.id,
+    required this.emoji,
+    required this.defaultTitle,
+    required this.colorValue,
+  });
+
+  final String id;
+  final String emoji;
+  final String defaultTitle;
+  final int colorValue;
+}
+
+const List<VoidProjectTemplate> kVoidProjectTemplates = [
+  VoidProjectTemplate(
+    id: 'study',
+    emoji: '📚',
+    defaultTitle: 'Учёба',
+    colorValue: 0xFF60A5FA,
+  ),
+  VoidProjectTemplate(
+    id: 'work',
+    emoji: '💼',
+    defaultTitle: 'Работа',
+    colorValue: 0xFF8B5CF6,
+  ),
+  VoidProjectTemplate(
+    id: 'void',
+    emoji: '🚀',
+    defaultTitle: 'VOID',
+    colorValue: 0xFF8B5CF6,
+  ),
+  VoidProjectTemplate(
+    id: 'sport',
+    emoji: '🏋️',
+    defaultTitle: 'Спорт',
+    colorValue: 0xFFF87171,
+  ),
+  VoidProjectTemplate(
+    id: 'finance',
+    emoji: '💰',
+    defaultTitle: 'Финансы',
+    colorValue: 0xFFFBBF24,
+  ),
+  VoidProjectTemplate(
+    id: 'reading',
+    emoji: '📖',
+    defaultTitle: 'Чтение',
+    colorValue: 0xFF34D399,
+  ),
+  VoidProjectTemplate(
+    id: 'personal',
+    emoji: '🎯',
+    defaultTitle: 'Личное',
+    colorValue: 0xFFF472B6,
+  ),
+  VoidProjectTemplate(
+    id: 'health',
+    emoji: '❤️',
+    defaultTitle: 'Здоровье',
+    colorValue: 0xFFF87171,
+  ),
+];
+
+const List<int> kVoidProjectColorValues = [
+  0xFF8B5CF6,
+  0xFF34D399,
+  0xFF60A5FA,
+  0xFFF472B6,
+  0xFFFBBF24,
+  0xFFF87171,
+];
+
+VoidProjectTemplate? voidProjectTemplateById(String id) {
+  for (final template in kVoidProjectTemplates) {
+    if (template.id == id) return template;
+  }
+  return null;
+}
+
+String resolveVoidProjectEmoji(String iconName) =>
+    voidProjectTemplateById(iconName)?.emoji ?? '📁';
+
+Color resolveVoidProjectColor(int value) => Color(value);
+
+String formatVoidTaskCountLabel(int count) {
+  final mod10 = count % 10;
+  final mod100 = count % 100;
+  if (mod100 >= 11 && mod100 <= 14) return '$count задач';
+  if (mod10 == 1) return '$count задача';
+  if (mod10 >= 2 && mod10 <= 4) return '$count задачи';
+  return '$count задач';
+}
+
+String formatVoidSessionCountWord(int count) {
+  final mod10 = count % 10;
+  final mod100 = count % 100;
+  if (mod100 >= 11 && mod100 <= 14) return 'сессий';
+  if (mod10 == 1) return 'сессия';
+  if (mod10 >= 2 && mod10 <= 4) return 'сессии';
+  return 'сессий';
+}
+
+String formatVoidSessionProgressLabel(int completed, int estimated) =>
+    '$completed / $estimated ${formatVoidSessionCountWord(estimated)}';
+const _kDeepWorkModeMinutes = 'deep_work_mode_minutes';
+const _kFocusModeStats = 'focus_mode_stats';
+const _kBonusXp = 'bonus_xp';
+const _kWeeklyGoalsWeekKey = 'weekly_goals_week_key';
+const _kWeeklyGoalsClaimed = 'weekly_goals_claimed';
+const _kWeeklySessionsCount = 'weekly_sessions_count';
+const kVoidWeeklyFocusTargetSeconds = 5 * 3600;
+const kVoidWeeklySessionsTarget = 20;
+const kVoidWeeklyStreakTarget = 3;
+const kVoidWeeklyGoalFocusXp = 30;
+const kVoidWeeklyGoalSessionsXp = 25;
+const kVoidWeeklyGoalStreakXp = 20;
 const _kDefaultDailyGoalMinutes = 60;
+const _kDefaultDeepWorkModeMinutes = 25;
+const kFirstLaunchFeedbackSessionThreshold = 3;
 const kVoidAppVersion = '1.0.0';
+const kVoidBackupFormatVersion = 1;
 const kVoidRuStoreUrl = 'https://www.rustore.ru/catalog/app/ru.voidapp.focus';
+
+const _kNotificationsEnabled = 'notifications_enabled';
+const _kNotificationHour = 'notification_hour';
+const _kNotificationMinute = 'notification_minute';
+const kDefaultNotificationHour = 19;
+const kDefaultNotificationMinute = 0;
+const int kVoidNotificationDailyReminderId = 1001;
+const int kVoidNotificationStreakWarningId = 1002;
+const String kVoidNotificationChannelId = 'void_smart_reminders';
 
 const _kDayLabels = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 const _kMonthLabels = [
@@ -57,6 +200,9 @@ class VoidSessionRecord {
     required this.distractions,
     required this.focusScore,
     required this.xp,
+    this.taskId,
+    this.taskTitle,
+    this.focusModeMinutes,
   });
 
   final DateTime completedAt;
@@ -64,6 +210,31 @@ class VoidSessionRecord {
   final int distractions;
   final int focusScore;
   final int xp;
+  final String? taskId;
+  final String? taskTitle;
+  final int? focusModeMinutes;
+
+  VoidSessionRecord copyWith({
+    DateTime? completedAt,
+    int? focusSeconds,
+    int? distractions,
+    int? focusScore,
+    int? xp,
+    String? taskId,
+    String? taskTitle,
+    int? focusModeMinutes,
+  }) {
+    return VoidSessionRecord(
+      completedAt: completedAt ?? this.completedAt,
+      focusSeconds: focusSeconds ?? this.focusSeconds,
+      distractions: distractions ?? this.distractions,
+      focusScore: focusScore ?? this.focusScore,
+      xp: xp ?? this.xp,
+      taskId: taskId ?? this.taskId,
+      taskTitle: taskTitle ?? this.taskTitle,
+      focusModeMinutes: focusModeMinutes ?? this.focusModeMinutes,
+    );
+  }
 
   Map<String, dynamic> toJson() => {
         'completedAt': completedAt.toIso8601String(),
@@ -71,6 +242,9 @@ class VoidSessionRecord {
         'distractions': distractions,
         'focusScore': focusScore,
         'xp': xp,
+        if (taskId != null) 'taskId': taskId,
+        if (taskTitle != null) 'taskTitle': taskTitle,
+        if (focusModeMinutes != null) 'focusModeMinutes': focusModeMinutes,
       };
 
   factory VoidSessionRecord.fromJson(Map<String, dynamic> json) {
@@ -81,9 +255,431 @@ class VoidSessionRecord {
       distractions: distractions,
       focusScore: computeFocusScore(distractions),
       xp: json['xp'] as int? ?? 0,
+      taskId: json['taskId'] as String?,
+      taskTitle: json['taskTitle'] as String?,
+      focusModeMinutes: json['focusModeMinutes'] as int?,
     );
   }
 }
+
+class VoidProject {
+  const VoidProject({
+    required this.id,
+    required this.title,
+    required this.createdAt,
+    this.colorValue = kDefaultProjectColorValue,
+    this.iconName = kDefaultProjectIconName,
+  });
+
+  final String id;
+  final String title;
+  final DateTime createdAt;
+  final int colorValue;
+  final String iconName;
+
+  Color get color => resolveVoidProjectColor(colorValue);
+
+  String get emoji => resolveVoidProjectEmoji(iconName);
+
+  VoidProject copyWith({
+    String? id,
+    String? title,
+    DateTime? createdAt,
+    int? colorValue,
+    String? iconName,
+  }) {
+    return VoidProject(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      createdAt: createdAt ?? this.createdAt,
+      colorValue: colorValue ?? this.colorValue,
+      iconName: iconName ?? this.iconName,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'title': title,
+        'createdAt': createdAt.toIso8601String(),
+        'colorValue': colorValue,
+        'iconName': iconName,
+      };
+
+  factory VoidProject.fromJson(Map<String, dynamic> json) {
+    return VoidProject(
+      id: json['id'] as String,
+      title: json['title'] as String? ?? '',
+      createdAt: DateTime.parse(json['createdAt'] as String),
+      colorValue: json['colorValue'] as int? ?? kDefaultProjectColorValue,
+      iconName: json['iconName'] as String? ?? kDefaultProjectIconName,
+    );
+  }
+}
+
+class VoidProjectEditorResult {
+  const VoidProjectEditorResult({
+    required this.title,
+    required this.colorValue,
+    required this.iconName,
+  });
+
+  final String title;
+  final int colorValue;
+  final String iconName;
+}
+
+class VoidTask {
+  const VoidTask({
+    required this.id,
+    required this.title,
+    required this.description,
+    required this.isCompleted,
+    required this.estimatedSessions,
+    required this.totalFocusSeconds,
+    required this.completedSessions,
+    required this.focusScoreSum,
+    required this.bestFocusScore,
+    required this.createdAt,
+    this.projectId,
+  });
+
+  final String id;
+  final String title;
+  final String description;
+  final bool isCompleted;
+  final int estimatedSessions;
+  final int totalFocusSeconds;
+  final int completedSessions;
+  final int focusScoreSum;
+  final int bestFocusScore;
+  final DateTime createdAt;
+  final String? projectId;
+
+  String get statusLabel => isCompleted ? 'Завершена' : 'Активна';
+
+  double get averageFocusScore =>
+      completedSessions == 0 ? 0 : focusScoreSum / completedSessions;
+
+  double get sessionProgress => estimatedSessions <= 0
+      ? 0
+      : completedSessions / estimatedSessions;
+
+  double get sessionProgressBarValue => sessionProgress.clamp(0.0, 1.0);
+
+  int get sessionProgressPercent => estimatedSessions <= 0
+      ? 0
+      : (sessionProgress * 100).round();
+
+  String get sessionProgressLabel =>
+      formatVoidSessionProgressLabel(completedSessions, estimatedSessions);
+
+  VoidTask copyWith({
+    String? id,
+    String? title,
+    String? description,
+    bool? isCompleted,
+    int? estimatedSessions,
+    int? totalFocusSeconds,
+    int? completedSessions,
+    int? focusScoreSum,
+    int? bestFocusScore,
+    DateTime? createdAt,
+    String? projectId,
+    bool clearProjectId = false,
+  }) {
+    return VoidTask(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      description: description ?? this.description,
+      isCompleted: isCompleted ?? this.isCompleted,
+      estimatedSessions: estimatedSessions ?? this.estimatedSessions,
+      totalFocusSeconds: totalFocusSeconds ?? this.totalFocusSeconds,
+      completedSessions: completedSessions ?? this.completedSessions,
+      focusScoreSum: focusScoreSum ?? this.focusScoreSum,
+      bestFocusScore: bestFocusScore ?? this.bestFocusScore,
+      createdAt: createdAt ?? this.createdAt,
+      projectId: clearProjectId ? null : (projectId ?? this.projectId),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'title': title,
+        'description': description,
+        'isCompleted': isCompleted,
+        'estimatedSessions': estimatedSessions,
+        'totalFocusSeconds': totalFocusSeconds,
+        'completedSessions': completedSessions,
+        'focusScoreSum': focusScoreSum,
+        'bestFocusScore': bestFocusScore,
+        'createdAt': createdAt.toIso8601String(),
+        if (projectId != null) 'projectId': projectId,
+      };
+
+  factory VoidTask.fromJson(Map<String, dynamic> json) {
+    return VoidTask(
+      id: json['id'] as String,
+      title: json['title'] as String? ?? '',
+      description: json['description'] as String? ?? '',
+      isCompleted: json['isCompleted'] as bool? ?? false,
+      estimatedSessions: json['estimatedSessions'] as int? ??
+          kDefaultTaskEstimatedSessions,
+      totalFocusSeconds: json['totalFocusSeconds'] as int? ?? 0,
+      completedSessions: json['completedSessions'] as int? ?? 0,
+      focusScoreSum: json['focusScoreSum'] as int? ?? 0,
+      bestFocusScore: json['bestFocusScore'] as int? ?? 0,
+      createdAt: DateTime.parse(json['createdAt'] as String),
+      projectId: json['projectId'] as String?,
+    );
+  }
+}
+
+class VoidTaskSessionProgressSection extends StatelessWidget {
+  const VoidTaskSessionProgressSection({
+    super.key,
+    required this.task,
+    required this.accent,
+    this.showFocusTime = true,
+  });
+
+  final VoidTask task;
+  final Color accent;
+  final bool showFocusTime;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              'Прогресс',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.white.withValues(alpha: 0.45),
+              ),
+            ),
+            const Spacer(),
+            Text(
+              '${task.sessionProgressPercent}%',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: accent.withValues(alpha: 0.9),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Text(
+          task.sessionProgressLabel,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w500,
+            color: Colors.white.withValues(alpha: 0.82),
+          ),
+        ),
+        const SizedBox(height: 8),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(6),
+          child: LinearProgressIndicator(
+            value: task.sessionProgressBarValue,
+            minHeight: 6,
+            backgroundColor: Colors.white.withValues(alpha: 0.08),
+            valueColor: AlwaysStoppedAnimation(
+              task.sessionProgress >= 1.0 ? kVoidGoalComplete : accent,
+            ),
+          ),
+        ),
+        if (showFocusTime) ...[
+          const SizedBox(height: 8),
+          Text(
+            formatFocusDuration(task.totalFocusSeconds),
+            style: TextStyle(
+              fontSize: 11,
+              color: Colors.white.withValues(alpha: 0.42),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class VoidFocusBreakdownEntry {
+  const VoidFocusBreakdownEntry({
+    required this.title,
+    required this.focusSeconds,
+    required this.sessionsCount,
+  });
+
+  final String title;
+  final int focusSeconds;
+  final int sessionsCount;
+}
+
+class VoidTaskEditorResult {
+  const VoidTaskEditorResult({
+    required this.title,
+    required this.description,
+    required this.isCompleted,
+    required this.estimatedSessions,
+    this.projectId,
+  });
+
+  final String title;
+  final String description;
+  final bool isCompleted;
+  final int estimatedSessions;
+  final String? projectId;
+}
+
+class VoidDeepWorkMode {
+  const VoidDeepWorkMode({
+    required this.minutes,
+    required this.recommendation,
+  });
+
+  final int minutes;
+  final String recommendation;
+
+  static const light = VoidDeepWorkMode(
+    minutes: 25,
+    recommendation: 'Light Focus',
+  );
+  static const deep = VoidDeepWorkMode(
+    minutes: 50,
+    recommendation: 'Deep Focus',
+  );
+  static const elite = VoidDeepWorkMode(
+    minutes: 90,
+    recommendation: 'Elite Focus',
+  );
+
+  static const options = [light, deep, elite];
+
+  static VoidDeepWorkMode? forMinutes(int minutes) {
+    for (final mode in options) {
+      if (mode.minutes == minutes) return mode;
+    }
+    return null;
+  }
+
+  static VoidDeepWorkMode resolve(int minutes) =>
+      forMinutes(minutes) ?? light;
+
+  String get durationLabel => '$minutes мин';
+}
+
+class VoidFocusModeStatEntry {
+  const VoidFocusModeStatEntry({
+    required this.minutes,
+    required this.sessions,
+    required this.focusSeconds,
+  });
+
+  final int minutes;
+  final int sessions;
+  final int focusSeconds;
+
+  VoidDeepWorkMode get mode => VoidDeepWorkMode.resolve(minutes);
+}
+
+class VoidFocusModeStats {
+  const VoidFocusModeStats({required this.entries});
+
+  final List<VoidFocusModeStatEntry> entries;
+
+  static const empty = VoidFocusModeStats(
+    entries: [
+      VoidFocusModeStatEntry(minutes: 25, sessions: 0, focusSeconds: 0),
+      VoidFocusModeStatEntry(minutes: 50, sessions: 0, focusSeconds: 0),
+      VoidFocusModeStatEntry(minutes: 90, sessions: 0, focusSeconds: 0),
+    ],
+  );
+
+  VoidFocusModeStatEntry entryForMinutes(int minutes) {
+    final resolved = VoidDeepWorkMode.resolve(minutes).minutes;
+    return entries.firstWhere((entry) => entry.minutes == resolved);
+  }
+}
+
+Map<String, dynamic> emptyFocusModeStatsMap() => {
+      for (final mode in VoidDeepWorkMode.options)
+        '${mode.minutes}': {'sessions': 0, 'focusSeconds': 0},
+    };
+
+VoidFocusModeStats parseFocusModeStatsMap(Map<String, dynamic> raw) {
+  return VoidFocusModeStats(
+    entries: VoidDeepWorkMode.options
+        .map((mode) {
+          final bucket = raw['${mode.minutes}'];
+          if (bucket is! Map) {
+            return VoidFocusModeStatEntry(
+              minutes: mode.minutes,
+              sessions: 0,
+              focusSeconds: 0,
+            );
+          }
+          return VoidFocusModeStatEntry(
+            minutes: mode.minutes,
+            sessions: bucket['sessions'] is num
+                ? (bucket['sessions'] as num).toInt()
+                : int.tryParse('${bucket['sessions']}') ?? 0,
+            focusSeconds: bucket['focusSeconds'] is num
+                ? (bucket['focusSeconds'] as num).toInt()
+                : int.tryParse('${bucket['focusSeconds']}') ?? 0,
+          );
+        })
+        .toList(),
+  );
+}
+
+VoidFocusModeStats buildFocusModeStatsFromSessions(
+  List<VoidSessionRecord> sessions,
+) {
+  final buckets = {
+    for (final mode in VoidDeepWorkMode.options) mode.minutes: (sessions: 0, focus: 0),
+  };
+
+  for (final session in sessions) {
+    if (session.focusSeconds <= 0) continue;
+    final minutes =
+        VoidDeepWorkMode.resolve(session.focusModeMinutes ?? 25).minutes;
+    final current = buckets[minutes]!;
+    buckets[minutes] = (
+      sessions: current.sessions + 1,
+      focus: current.focus + session.focusSeconds,
+    );
+  }
+
+  return VoidFocusModeStats(
+    entries: VoidDeepWorkMode.options
+        .map(
+          (mode) => VoidFocusModeStatEntry(
+            minutes: mode.minutes,
+            sessions: buckets[mode.minutes]!.sessions,
+            focusSeconds: buckets[mode.minutes]!.focus,
+          ),
+        )
+        .toList(),
+  );
+}
+
+class VoidTaskSelection {
+  const VoidTaskSelection({this.taskId, this.taskTitle});
+
+  final String? taskId;
+  final String? taskTitle;
+
+  bool get hasTask => taskId != null && taskTitle != null;
+
+  static const withoutTask = VoidTaskSelection();
+}
+
+String generateVoidTaskId() =>
+    '${DateTime.now().microsecondsSinceEpoch}';
 
 String formatSessionDateTime(DateTime dateTime) {
   final day = dateTime.day.toString().padLeft(2, '0');
@@ -141,6 +737,24 @@ class VoidDayActivity {
         focusSeconds: focusSeconds,
         goalMinutes: goalMinutes,
       );
+
+  VoidDayActivity copyWith({
+    DateTime? date,
+    int? focusSeconds,
+    int? sessionsCount,
+    int? distractions,
+    double? averageFocusScore,
+    int? xpEarned,
+  }) {
+    return VoidDayActivity(
+      date: date ?? this.date,
+      focusSeconds: focusSeconds ?? this.focusSeconds,
+      sessionsCount: sessionsCount ?? this.sessionsCount,
+      distractions: distractions ?? this.distractions,
+      averageFocusScore: averageFocusScore ?? this.averageFocusScore,
+      xpEarned: xpEarned ?? this.xpEarned,
+    );
+  }
 }
 
 class VoidCalendarMonthStats {
@@ -185,14 +799,14 @@ int computeLongestActiveStreak(List<VoidDayActivity> days) {
 DateTime normalizeActivityDate(DateTime date) =>
     DateTime(date.year, date.month, date.day);
 
-Set<DateTime> activeDatesFromActivity(Map<String, int> activity) {
+Set<DateTime> activeDatesFromActivity(Map<String, VoidDayActivity> activity) {
   return activity.entries
-      .where((entry) => entry.value > 0)
-      .map((entry) => normalizeActivityDate(_parseDateKey(entry.key)))
+      .where((entry) => entry.value.focusSeconds > 0)
+      .map((entry) => normalizeActivityDate(entry.value.date))
       .toSet();
 }
 
-int computeCurrentStreakFromActivity(Map<String, int> activity) {
+int computeCurrentStreakFromActivity(Map<String, VoidDayActivity> activity) {
   final activeDates = activeDatesFromActivity(activity);
   if (activeDates.isEmpty) return 0;
 
@@ -212,7 +826,7 @@ int computeCurrentStreakFromActivity(Map<String, int> activity) {
   return streak;
 }
 
-int computeBestStreakFromActivity(Map<String, int> activity) {
+int computeBestStreakFromActivity(Map<String, VoidDayActivity> activity) {
   final dates = activeDatesFromActivity(activity).toList()..sort();
   if (dates.isEmpty) return 0;
   if (dates.length == 1) return 1;
@@ -279,6 +893,93 @@ DateTime _parseDateKey(String key) {
   );
 }
 
+VoidDayActivity voidDayActivityFromJsonEntry(String key, Object? value) {
+  final date = _parseDateKey(key);
+  if (value is num) {
+    return VoidDayActivity(date: date, focusSeconds: value.toInt());
+  }
+  if (value is Map) {
+    return VoidDayActivity(
+      date: date,
+      focusSeconds: (value['focusSeconds'] as num?)?.toInt() ?? 0,
+      sessionsCount: (value['sessionsCount'] as num?)?.toInt() ?? 0,
+      distractions: (value['distractions'] as num?)?.toInt() ?? 0,
+      averageFocusScore:
+          (value['averageFocusScore'] as num?)?.toDouble() ?? 0,
+      xpEarned: (value['xpEarned'] as num?)?.toInt() ?? 0,
+    );
+  }
+  return VoidDayActivity(date: date, focusSeconds: 0);
+}
+
+Map<String, VoidDayActivity> parseDailyActivityMap(String? raw) {
+  if (raw == null || raw.isEmpty) return {};
+  try {
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map) return {};
+    return decoded.map(
+      (key, value) => MapEntry(
+        key.toString(),
+        voidDayActivityFromJsonEntry(key.toString(), value),
+      ),
+    );
+  } catch (_) {
+    return {};
+  }
+}
+
+Map<String, VoidDayActivity> parseDailyActivityFromDynamicMap(
+  Map<dynamic, dynamic> raw,
+) {
+  return raw.map(
+    (key, value) => MapEntry(
+      key.toString(),
+      voidDayActivityFromJsonEntry(key.toString(), value),
+    ),
+  );
+}
+
+String encodeDailyActivityMap(Map<String, VoidDayActivity> activity) {
+  return jsonEncode(exportDailyActivityJson(activity));
+}
+
+Map<String, dynamic> exportDailyActivityJson(
+  Map<String, VoidDayActivity> activity,
+) {
+  return {
+    for (final entry in activity.entries)
+      entry.key: entry.value.focusSeconds,
+  };
+}
+
+VoidDayActivity mergeDailyActivity({
+  required String dayKey,
+  VoidDayActivity? existing,
+  required int addedFocusSeconds,
+  int addedDistractions = 0,
+  int addedFocusScore = 0,
+  int addedXp = 0,
+}) {
+  final date = existing?.date ?? _parseDateKey(dayKey);
+  final sessionsCount = (existing?.sessionsCount ?? 0) + 1;
+  final totalFocus = (existing?.focusSeconds ?? 0) + addedFocusSeconds;
+  final totalDistractions = (existing?.distractions ?? 0) + addedDistractions;
+  final previousScoreSum =
+      (existing?.averageFocusScore ?? 0) * (existing?.sessionsCount ?? 0);
+  final averageFocusScore = sessionsCount == 0
+      ? 0.0
+      : (previousScoreSum + addedFocusScore) / sessionsCount;
+
+  return VoidDayActivity(
+    date: date,
+    focusSeconds: totalFocus,
+    sessionsCount: sessionsCount,
+    distractions: totalDistractions,
+    averageFocusScore: averageFocusScore,
+    xpEarned: (existing?.xpEarned ?? 0) + addedXp,
+  );
+}
+
 class _VoidDaySessionAggregate {
   const _VoidDaySessionAggregate({
     this.sessionsCount = 0,
@@ -311,8 +1012,675 @@ class _VoidDaySessionAggregate {
   }
 }
 
+class VoidPersonalRecords {
+  const VoidPersonalRecords({
+    required this.longestSessionSeconds,
+    required this.bestFocusScore,
+    required this.mostSessionsInDay,
+    required this.longestStreak,
+    required this.mostFocusTimeInDaySeconds,
+  });
+
+  final int longestSessionSeconds;
+  final int bestFocusScore;
+  final int mostSessionsInDay;
+  final int longestStreak;
+  final int mostFocusTimeInDaySeconds;
+
+  static const empty = VoidPersonalRecords(
+    longestSessionSeconds: 0,
+    bestFocusScore: 0,
+    mostSessionsInDay: 0,
+    longestStreak: 0,
+    mostFocusTimeInDaySeconds: 0,
+  );
+
+  bool get hasAnyRecord =>
+      longestSessionSeconds > 0 ||
+      bestFocusScore > 0 ||
+      mostSessionsInDay > 0 ||
+      longestStreak > 0 ||
+      mostFocusTimeInDaySeconds > 0;
+}
+
+VoidPersonalRecords buildPersonalRecords({
+  required List<VoidSessionRecord> sessionHistory,
+  required Map<String, VoidDayActivity> activity,
+  required int bestStreak,
+}) {
+  var longestSessionSeconds = 0;
+  var bestFocusScore = 0;
+  final sessionsByDay = <String, int>{};
+
+  for (final session in sessionHistory) {
+    if (session.focusSeconds > longestSessionSeconds) {
+      longestSessionSeconds = session.focusSeconds;
+    }
+    if (session.focusScore > bestFocusScore) {
+      bestFocusScore = session.focusScore;
+    }
+    final dayKey = StatsService.dateKey(
+      normalizeActivityDate(session.completedAt),
+    );
+    sessionsByDay[dayKey] = (sessionsByDay[dayKey] ?? 0) + 1;
+  }
+
+  var mostSessionsInDay = 0;
+  for (final count in sessionsByDay.values) {
+    if (count > mostSessionsInDay) {
+      mostSessionsInDay = count;
+    }
+  }
+
+  var mostFocusTimeInDaySeconds = 0;
+  for (final day in activity.values) {
+    if (day.focusSeconds > mostFocusTimeInDaySeconds) {
+      mostFocusTimeInDaySeconds = day.focusSeconds;
+    }
+  }
+
+  return VoidPersonalRecords(
+    longestSessionSeconds: longestSessionSeconds,
+    bestFocusScore: bestFocusScore,
+    mostSessionsInDay: mostSessionsInDay,
+    longestStreak: bestStreak,
+    mostFocusTimeInDaySeconds: mostFocusTimeInDaySeconds,
+  );
+}
+
+String formatPersonalRecordDuration(int seconds) =>
+    seconds > 0 ? formatFocusDuration(seconds) : '—';
+
+String formatPersonalRecordCount(int value) => value > 0 ? '$value' : '—';
+
+String formatPersonalRecordScore(int score) =>
+    score > 0 ? formatFocusScore(score) : '—';
+
 String formatCalendarDayTitle(DateTime date) {
   return '${date.day} ${_kMonthLabels[date.month - 1]}';
+}
+
+class VoidWeekBounds {
+  const VoidWeekBounds({required this.start, required this.end});
+
+  final DateTime start;
+  final DateTime end;
+}
+
+VoidWeekBounds weekBoundsContaining(DateTime date) {
+  final normalized = normalizeActivityDate(date);
+  final start = normalized.subtract(Duration(days: normalized.weekday - 1));
+  final end = start.add(const Duration(days: 6));
+  return VoidWeekBounds(start: start, end: end);
+}
+
+bool isDateWithinWeek(DateTime date, VoidWeekBounds bounds) {
+  final normalized = normalizeActivityDate(date);
+  return !normalized.isBefore(bounds.start) && !normalized.isAfter(bounds.end);
+}
+
+String formatWeeklyReviewPeriod(VoidWeekBounds bounds) {
+  final start = bounds.start;
+  final end = bounds.end;
+  if (start.month == end.month) {
+    return '${start.day}–${end.day} ${_kMonthLabels[start.month - 1]}';
+  }
+  return '${start.day} ${_kMonthLabels[start.month - 1]} – '
+      '${end.day} ${_kMonthLabels[end.month - 1]}';
+}
+
+class VoidWeeklyReviewStats {
+  const VoidWeeklyReviewStats({
+    required this.weekBounds,
+    required this.sessionsCount,
+    required this.totalFocusSeconds,
+    required this.averageFocusScore,
+    required this.totalDistractions,
+    required this.bestDay,
+    required this.bestDayFocusSeconds,
+    required this.longestSessionSeconds,
+  });
+
+  final VoidWeekBounds weekBounds;
+  final int sessionsCount;
+  final int totalFocusSeconds;
+  final double averageFocusScore;
+  final int totalDistractions;
+  final DateTime? bestDay;
+  final int bestDayFocusSeconds;
+  final int longestSessionSeconds;
+
+  factory VoidWeeklyReviewStats.fromSessions({
+    required List<VoidSessionRecord> sessions,
+    required VoidWeekBounds weekBounds,
+  }) {
+    final weekSessions = sessions
+        .where((session) => isDateWithinWeek(session.completedAt, weekBounds))
+        .toList();
+
+    if (weekSessions.isEmpty) {
+      return VoidWeeklyReviewStats(
+        weekBounds: weekBounds,
+        sessionsCount: 0,
+        totalFocusSeconds: 0,
+        averageFocusScore: 0,
+        totalDistractions: 0,
+        bestDay: null,
+        bestDayFocusSeconds: 0,
+        longestSessionSeconds: 0,
+      );
+    }
+
+    final totalFocusSeconds = weekSessions.fold<int>(
+      0,
+      (sum, session) => sum + session.focusSeconds,
+    );
+    final totalDistractions = weekSessions.fold<int>(
+      0,
+      (sum, session) => sum + session.distractions,
+    );
+    final scoreTotal = weekSessions.fold<int>(
+      0,
+      (sum, session) => sum + session.focusScore,
+    );
+    final longestSessionSeconds = weekSessions
+        .map((session) => session.focusSeconds)
+        .reduce((a, b) => a > b ? a : b);
+
+    final focusByDay = <DateTime, int>{};
+    for (final session in weekSessions) {
+      final day = normalizeActivityDate(session.completedAt);
+      focusByDay[day] = (focusByDay[day] ?? 0) + session.focusSeconds;
+    }
+    DateTime? bestDay;
+    var bestDayFocusSeconds = 0;
+    for (final entry in focusByDay.entries) {
+      if (entry.value > bestDayFocusSeconds) {
+        bestDay = entry.key;
+        bestDayFocusSeconds = entry.value;
+      }
+    }
+
+    return VoidWeeklyReviewStats(
+      weekBounds: weekBounds,
+      sessionsCount: weekSessions.length,
+      totalFocusSeconds: totalFocusSeconds,
+      averageFocusScore: scoreTotal / weekSessions.length,
+      totalDistractions: totalDistractions,
+      bestDay: bestDay,
+      bestDayFocusSeconds: bestDayFocusSeconds,
+      longestSessionSeconds: longestSessionSeconds,
+    );
+  }
+
+  String get bestDayLabel {
+    if (bestDay == null || bestDayFocusSeconds <= 0) return '—';
+    final day = bestDay!;
+    return '${formatCalendarDayTitle(day)} (${_kDayLabels[day.weekday - 1]})';
+  }
+}
+
+class VoidWeeklyReviewData {
+  const VoidWeeklyReviewData({
+    required this.currentWeek,
+    required this.previousWeek,
+    required this.summary,
+  });
+
+  final VoidWeeklyReviewStats currentWeek;
+  final VoidWeeklyReviewStats previousWeek;
+  final String summary;
+}
+
+VoidWeeklyReviewData buildWeeklyReviewData({
+  required List<VoidSessionRecord> sessionHistory,
+  DateTime? referenceDate,
+}) {
+  final reference = referenceDate ?? DateTime.now();
+  final currentBounds = weekBoundsContaining(reference);
+  final previousReference = currentBounds.start.subtract(const Duration(days: 1));
+  final previousBounds = weekBoundsContaining(previousReference);
+
+  final currentWeek = VoidWeeklyReviewStats.fromSessions(
+    sessions: sessionHistory,
+    weekBounds: currentBounds,
+  );
+  final previousWeek = VoidWeeklyReviewStats.fromSessions(
+    sessions: sessionHistory,
+    weekBounds: previousBounds,
+  );
+
+  return VoidWeeklyReviewData(
+    currentWeek: currentWeek,
+    previousWeek: previousWeek,
+    summary: buildWeeklyMotivationalSummary(
+      current: currentWeek,
+      previous: previousWeek,
+    ),
+  );
+}
+
+class VoidProductivityInsights {
+  const VoidProductivityInsights({
+    required this.mostFocusedProjectTitle,
+    required this.mostFocusedProjectSeconds,
+    required this.mostFocusedTaskTitle,
+    required this.mostFocusedTaskSeconds,
+    required this.averageSessionDurationSeconds,
+    required this.bestFocusDay,
+    required this.bestFocusDaySeconds,
+    required this.bestFocusWeekBounds,
+    required this.bestFocusWeekSeconds,
+    required this.sessionsCount,
+    required this.totalProjectFocusSeconds,
+    required this.projectBreakdown,
+    required this.taskBreakdown,
+  });
+
+  final String? mostFocusedProjectTitle;
+  final int mostFocusedProjectSeconds;
+  final String? mostFocusedTaskTitle;
+  final int mostFocusedTaskSeconds;
+  final int averageSessionDurationSeconds;
+  final DateTime? bestFocusDay;
+  final int bestFocusDaySeconds;
+  final VoidWeekBounds? bestFocusWeekBounds;
+  final int bestFocusWeekSeconds;
+  final int sessionsCount;
+  final int totalProjectFocusSeconds;
+  final List<VoidFocusBreakdownEntry> projectBreakdown;
+  final List<VoidFocusBreakdownEntry> taskBreakdown;
+
+  bool get hasData => sessionsCount > 0;
+
+  static const empty = VoidProductivityInsights(
+    mostFocusedProjectTitle: null,
+    mostFocusedProjectSeconds: 0,
+    mostFocusedTaskTitle: null,
+    mostFocusedTaskSeconds: 0,
+    averageSessionDurationSeconds: 0,
+    bestFocusDay: null,
+    bestFocusDaySeconds: 0,
+    bestFocusWeekBounds: null,
+    bestFocusWeekSeconds: 0,
+    sessionsCount: 0,
+    totalProjectFocusSeconds: 0,
+    projectBreakdown: [],
+    taskBreakdown: [],
+  );
+
+  String get totalProjectFocusLabel => totalProjectFocusSeconds <= 0
+      ? '—'
+      : formatFocusDuration(totalProjectFocusSeconds);
+
+  String get mostFocusedProjectLabel =>
+      _formatInsightTitleDuration(
+        mostFocusedProjectTitle,
+        mostFocusedProjectSeconds,
+      );
+
+  String get mostFocusedTaskLabel =>
+      _formatInsightTitleDuration(mostFocusedTaskTitle, mostFocusedTaskSeconds);
+
+  String get averageSessionDurationLabel => sessionsCount == 0
+      ? '—'
+      : formatFocusDuration(averageSessionDurationSeconds);
+
+  String get bestFocusDayLabel {
+    if (bestFocusDay == null || bestFocusDaySeconds <= 0) return '—';
+    final day = bestFocusDay!;
+    return '${formatCalendarDayTitle(day)} (${_kDayLabels[day.weekday - 1]}) · '
+        '${formatFocusDuration(bestFocusDaySeconds)}';
+  }
+
+  String get bestFocusWeekLabel {
+    if (bestFocusWeekBounds == null || bestFocusWeekSeconds <= 0) return '—';
+    return '${formatWeeklyReviewPeriod(bestFocusWeekBounds!)} · '
+        '${formatFocusDuration(bestFocusWeekSeconds)}';
+  }
+}
+
+String _formatInsightTitleDuration(String? title, int seconds) {
+  if (title == null || title.isEmpty || seconds <= 0) return '—';
+  return '$title · ${formatFocusDuration(seconds)}';
+}
+
+VoidProductivityInsights buildProductivityInsights({
+  required List<VoidSessionRecord> sessionHistory,
+  required List<VoidTask> tasks,
+  required List<VoidProject> projects,
+}) {
+  if (sessionHistory.isEmpty) {
+    return VoidProductivityInsights.empty;
+  }
+
+  VoidTask? taskById(String id) {
+    for (final task in tasks) {
+      if (task.id == id) return task;
+    }
+    return null;
+  }
+
+  VoidProject? projectById(String id) {
+    for (final project in projects) {
+      if (project.id == id) return project;
+    }
+    return null;
+  }
+
+  String? taskTitleForId(String taskId) {
+    final task = taskById(taskId);
+    if (task != null) return task.title;
+    for (final session in sessionHistory) {
+      if (session.taskId == taskId &&
+          session.taskTitle != null &&
+          session.taskTitle!.isNotEmpty) {
+        return session.taskTitle;
+      }
+    }
+    return null;
+  }
+
+  final focusByTask = <String, int>{};
+  final focusByProject = <String, int>{};
+  final sessionsByTask = <String, int>{};
+  final sessionsByProject = <String, int>{};
+  var totalFocusSeconds = 0;
+
+  for (final session in sessionHistory) {
+    totalFocusSeconds += session.focusSeconds;
+    final taskId = session.taskId;
+    if (taskId == null) continue;
+
+    focusByTask[taskId] = (focusByTask[taskId] ?? 0) + session.focusSeconds;
+    sessionsByTask[taskId] = (sessionsByTask[taskId] ?? 0) + 1;
+    final projectId = taskById(taskId)?.projectId;
+    if (projectId != null) {
+      focusByProject[projectId] =
+          (focusByProject[projectId] ?? 0) + session.focusSeconds;
+      sessionsByProject[projectId] =
+          (sessionsByProject[projectId] ?? 0) + 1;
+    }
+  }
+
+  String? topTaskId;
+  var topTaskSeconds = 0;
+  for (final entry in focusByTask.entries) {
+    if (entry.value > topTaskSeconds) {
+      topTaskId = entry.key;
+      topTaskSeconds = entry.value;
+    }
+  }
+
+  String? topProjectId;
+  var topProjectSeconds = 0;
+  for (final entry in focusByProject.entries) {
+    if (entry.value > topProjectSeconds) {
+      topProjectId = entry.key;
+      topProjectSeconds = entry.value;
+    }
+  }
+
+  final dayActivity = aggregateDayActivityFromSessions(sessionHistory);
+  DateTime? bestFocusDay;
+  var bestFocusDaySeconds = 0;
+  for (final activity in dayActivity.values) {
+    if (activity.focusSeconds > bestFocusDaySeconds) {
+      bestFocusDay = activity.date;
+      bestFocusDaySeconds = activity.focusSeconds;
+    }
+  }
+
+  final focusByWeekStart = <DateTime, int>{};
+  for (final session in sessionHistory) {
+    final weekStart = weekBoundsContaining(session.completedAt).start;
+    focusByWeekStart[weekStart] =
+        (focusByWeekStart[weekStart] ?? 0) + session.focusSeconds;
+  }
+
+  DateTime? bestWeekStart;
+  var bestFocusWeekSeconds = 0;
+  for (final entry in focusByWeekStart.entries) {
+    if (entry.value > bestFocusWeekSeconds) {
+      bestWeekStart = entry.key;
+      bestFocusWeekSeconds = entry.value;
+    }
+  }
+
+  final projectBreakdown = focusByProject.entries
+      .map(
+        (entry) => VoidFocusBreakdownEntry(
+          title: projectById(entry.key)?.title ?? 'Проект',
+          focusSeconds: entry.value,
+          sessionsCount: sessionsByProject[entry.key] ?? 0,
+        ),
+      )
+      .toList()
+    ..sort((a, b) => b.focusSeconds.compareTo(a.focusSeconds));
+
+  final taskBreakdown = focusByTask.entries
+      .map(
+        (entry) => VoidFocusBreakdownEntry(
+          title: taskTitleForId(entry.key) ?? 'Задача',
+          focusSeconds: entry.value,
+          sessionsCount: sessionsByTask[entry.key] ?? 0,
+        ),
+      )
+      .toList()
+    ..sort((a, b) => b.focusSeconds.compareTo(a.focusSeconds));
+
+  return VoidProductivityInsights(
+    mostFocusedProjectTitle:
+        topProjectId == null ? null : projectById(topProjectId)?.title,
+    mostFocusedProjectSeconds: topProjectSeconds,
+    mostFocusedTaskTitle:
+        topTaskId == null ? null : taskTitleForId(topTaskId),
+    mostFocusedTaskSeconds: topTaskSeconds,
+    averageSessionDurationSeconds:
+        totalFocusSeconds ~/ sessionHistory.length,
+    bestFocusDay: bestFocusDay,
+    bestFocusDaySeconds: bestFocusDaySeconds,
+    bestFocusWeekBounds: bestWeekStart == null
+        ? null
+        : weekBoundsContaining(bestWeekStart),
+    bestFocusWeekSeconds: bestFocusWeekSeconds,
+    sessionsCount: sessionHistory.length,
+    totalProjectFocusSeconds: focusByProject.values.fold<int>(
+      0,
+      (sum, seconds) => sum + seconds,
+    ),
+    projectBreakdown: projectBreakdown,
+    taskBreakdown: taskBreakdown,
+  );
+}
+
+String buildWeeklyMotivationalSummary({
+  required VoidWeeklyReviewStats current,
+  required VoidWeeklyReviewStats previous,
+}) {
+  if (current.sessionsCount == 0) {
+    return 'Начните неделю с первой фокус-сессии';
+  }
+
+  final focusLine =
+      'На этой неделе вы провели ${formatFocusDuration(current.totalFocusSeconds)} в глубоком фокусе';
+
+  if (previous.sessionsCount > 0 &&
+      previous.averageFocusScore > 0 &&
+      current.averageFocusScore > previous.averageFocusScore) {
+    final improvement = ((current.averageFocusScore - previous.averageFocusScore) /
+            previous.averageFocusScore *
+            100)
+        .round();
+    if (improvement >= 5) {
+      return 'Отличная неделя! Вы улучшили концентрацию на $improvement%';
+    }
+  }
+
+  if (current.totalFocusSeconds >= 3600 || current.sessionsCount >= 5) {
+    return 'Отличная неделя! $focusLine';
+  }
+
+  return focusLine;
+}
+
+const String kVoidWeeklyGoalFocusId = 'focus_5h';
+const String kVoidWeeklyGoalSessionsId = 'sessions_20';
+const String kVoidWeeklyGoalStreakId = 'streak_3d';
+
+class VoidWeeklyGoalProgress {
+  const VoidWeeklyGoalProgress({
+    required this.id,
+    required this.title,
+    required this.subtitle,
+    required this.current,
+    required this.target,
+    required this.xpReward,
+    required this.isRewardClaimed,
+  });
+
+  final String id;
+  final String title;
+  final String subtitle;
+  final int current;
+  final int target;
+  final int xpReward;
+  final bool isRewardClaimed;
+
+  double get progress =>
+      target <= 0 ? 0 : (current / target).clamp(0.0, 1.0);
+
+  bool get isCompleted => current >= target;
+
+  String get progressLabel => formatWeeklyGoalProgressLabel(this);
+}
+
+class VoidWeeklyGoalsData {
+  const VoidWeeklyGoalsData({
+    required this.weekBounds,
+    required this.goals,
+    required this.completedCount,
+  });
+
+  final VoidWeekBounds weekBounds;
+  final List<VoidWeeklyGoalProgress> goals;
+  final int completedCount;
+}
+
+int computeWeekFocusSeconds(
+  Map<String, VoidDayActivity> activity,
+  VoidWeekBounds bounds,
+) {
+  var total = 0;
+  for (var index = 0; index < 7; index++) {
+    final day = bounds.start.add(Duration(days: index));
+    total += activity[StatsService.dateKey(day)]?.focusSeconds ?? 0;
+  }
+  return total;
+}
+
+int computeWeekMaxStreakDays(
+  Map<String, VoidDayActivity> activity,
+  VoidWeekBounds bounds,
+) {
+  var best = 0;
+  var current = 0;
+  for (var index = 0; index < 7; index++) {
+    final day = bounds.start.add(Duration(days: index));
+    final key = StatsService.dateKey(day);
+    if ((activity[key]?.focusSeconds ?? 0) > 0) {
+      current++;
+      if (current > best) {
+        best = current;
+      }
+    } else {
+      current = 0;
+    }
+  }
+  return best;
+}
+
+List<VoidWeeklyGoalProgress> buildWeeklyGoalsProgress({
+  required List<VoidSessionRecord> sessionHistory,
+  required Map<String, VoidDayActivity> activity,
+  required Set<String> claimedIds,
+  DateTime? referenceDate,
+  int? weeklySessionsCount,
+}) {
+  final bounds = weekBoundsContaining(referenceDate ?? DateTime.now());
+  final weekStats = VoidWeeklyReviewStats.fromSessions(
+    sessions: sessionHistory,
+    weekBounds: bounds,
+  );
+  final weekFocusSeconds = computeWeekFocusSeconds(activity, bounds);
+  final sessionsCount = weeklySessionsCount ?? weekStats.sessionsCount;
+  final streakDays = computeWeekMaxStreakDays(activity, bounds);
+
+  return [
+    VoidWeeklyGoalProgress(
+      id: kVoidWeeklyGoalFocusId,
+      title: '5 часов фокуса',
+      subtitle: 'Наберите 5 ч за неделю',
+      current: weekFocusSeconds,
+      target: kVoidWeeklyFocusTargetSeconds,
+      xpReward: kVoidWeeklyGoalFocusXp,
+      isRewardClaimed: claimedIds.contains(kVoidWeeklyGoalFocusId),
+    ),
+    VoidWeeklyGoalProgress(
+      id: kVoidWeeklyGoalSessionsId,
+      title: '20 сессий',
+      subtitle: 'Завершите 20 сессий за неделю',
+      current: sessionsCount,
+      target: kVoidWeeklySessionsTarget,
+      xpReward: kVoidWeeklyGoalSessionsXp,
+      isRewardClaimed: claimedIds.contains(kVoidWeeklyGoalSessionsId),
+    ),
+    VoidWeeklyGoalProgress(
+      id: kVoidWeeklyGoalStreakId,
+      title: '3 дня серии',
+      subtitle: 'Серия из 3 дней подряд за неделю',
+      current: streakDays,
+      target: kVoidWeeklyStreakTarget,
+      xpReward: kVoidWeeklyGoalStreakXp,
+      isRewardClaimed: claimedIds.contains(kVoidWeeklyGoalStreakId),
+    ),
+  ];
+}
+
+VoidWeeklyGoalsData buildWeeklyGoalsData({
+  required List<VoidSessionRecord> sessionHistory,
+  required Map<String, VoidDayActivity> activity,
+  required Set<String> claimedIds,
+  DateTime? referenceDate,
+  int? weeklySessionsCount,
+}) {
+  final bounds = weekBoundsContaining(referenceDate ?? DateTime.now());
+  final goals = buildWeeklyGoalsProgress(
+    sessionHistory: sessionHistory,
+    activity: activity,
+    claimedIds: claimedIds,
+    referenceDate: referenceDate,
+    weeklySessionsCount: weeklySessionsCount,
+  );
+
+  return VoidWeeklyGoalsData(
+    weekBounds: bounds,
+    goals: goals,
+    completedCount: goals.where((goal) => goal.isCompleted).length,
+  );
+}
+
+String formatWeeklyGoalProgressLabel(VoidWeeklyGoalProgress goal) {
+  switch (goal.id) {
+    case kVoidWeeklyGoalFocusId:
+      return '${formatFocusDuration(goal.current)} / ${formatFocusDuration(goal.target)}';
+    case kVoidWeeklyGoalSessionsId:
+      return '${goal.current} / ${goal.target}';
+    case kVoidWeeklyGoalStreakId:
+      return '${goal.current} / ${goal.target} дн.';
+    default:
+      return '${goal.current} / ${goal.target}';
+  }
 }
 
 class VoidAchievement {
@@ -405,9 +1773,14 @@ class StatsData {
     required this.sessionHistory,
     required this.todayFocusSeconds,
     required this.dailyGoalMinutes,
+    required this.deepWorkModeMinutes,
     required this.averageFocusScore,
     required this.last7Days,
     required this.last30Days,
+    required this.personalRecords,
+    required this.bonusXp,
+    required this.weeklyGoals,
+    required this.focusModeStats,
   });
 
   final int completedSessions;
@@ -422,9 +1795,14 @@ class StatsData {
   final List<VoidSessionRecord> sessionHistory;
   final int todayFocusSeconds;
   final int dailyGoalMinutes;
+  final int deepWorkModeMinutes;
   final double averageFocusScore;
   final List<VoidDayActivity> last7Days;
   final List<VoidDayActivity> last30Days;
+  final VoidPersonalRecords personalRecords;
+  final int bonusXp;
+  final VoidWeeklyGoalsData weeklyGoals;
+  final VoidFocusModeStats focusModeStats;
 
   int get todayFocusMinutes => todayFocusSeconds ~/ 60;
 
@@ -438,15 +1816,17 @@ class StatsData {
   int get unlockedAchievementsCount =>
       achievements.where((achievement) => achievement.isUnlocked).length;
 
-  int get totalXp => computeTotalXp(totalFocusSeconds);
+  int get totalXp => computeTotalXp(totalFocusSeconds) + bonusXp;
 
   int get level => computeLevel(totalXp);
+
+  String get levelTitle => resolveLevelTitle(level);
 
   int get xpInCurrentLevel => computeXpInCurrentLevel(totalXp);
 
   double get levelProgress => computeLevelProgress(totalXp);
 
-  static const empty = StatsData(
+  static final empty = StatsData(
     completedSessions: 0,
     totalFocusSeconds: 0,
     currentStreak: 0,
@@ -459,9 +1839,19 @@ class StatsData {
     sessionHistory: [],
     todayFocusSeconds: 0,
     dailyGoalMinutes: _kDefaultDailyGoalMinutes,
+    deepWorkModeMinutes: _kDefaultDeepWorkModeMinutes,
     averageFocusScore: 0,
     last7Days: [],
     last30Days: [],
+    personalRecords: VoidPersonalRecords.empty,
+    bonusXp: 0,
+    weeklyGoals: buildWeeklyGoalsData(
+      sessionHistory: const [],
+      activity: const {},
+      claimedIds: const {},
+      referenceDate: DateTime(2000, 1, 3),
+    ),
+    focusModeStats: VoidFocusModeStats.empty,
   );
 }
 
@@ -538,6 +1928,222 @@ double computeLevelProgress(int totalXp) =>
 
 String formatLevelXpProgress(int xpInLevel) => '$xpInLevel / 100 XP';
 
+class VoidLevelTitleTier {
+  const VoidLevelTitleTier({
+    required this.minLevel,
+    required this.title,
+  });
+
+  final int minLevel;
+  final String title;
+}
+
+const List<VoidLevelTitleTier> kVoidLevelTitleTiers = [
+  VoidLevelTitleTier(minLevel: 50, title: 'VOID Master'),
+  VoidLevelTitleTier(minLevel: 25, title: 'Архитектор внимания'),
+  VoidLevelTitleTier(minLevel: 10, title: 'Мастер фокуса'),
+  VoidLevelTitleTier(minLevel: 5, title: 'Сосредоточенный'),
+  VoidLevelTitleTier(minLevel: 1, title: 'Новичок'),
+];
+
+String resolveLevelTitle(int level) {
+  final normalizedLevel = level < 1 ? 1 : level;
+  for (final tier in kVoidLevelTitleTiers) {
+    if (normalizedLevel >= tier.minLevel) {
+      return tier.title;
+    }
+  }
+  return kVoidLevelTitleTiers.last.title;
+}
+
+class VoidBackupImportResult {
+  const VoidBackupImportResult({
+    required this.success,
+    this.error,
+    this.sessionsCount = 0,
+    this.projectsCount = 0,
+    this.tasksCount = 0,
+  });
+
+  final bool success;
+  final String? error;
+  final int sessionsCount;
+  final int projectsCount;
+  final int tasksCount;
+}
+
+Map<String, dynamic>? parseVoidBackupJson(String raw) {
+  try {
+    final decoded = jsonDecode(raw.trim());
+    if (decoded is! Map) return null;
+    return decoded.map((key, value) => MapEntry(key.toString(), value));
+  } catch (_) {
+    return null;
+  }
+}
+
+bool isLegacyVoidBackup(Map<String, dynamic> backup) =>
+    !backup.containsKey('formatVersion') &&
+    backup.containsKey('completedSessions');
+
+Map<String, VoidDayActivity> dailyActivityFromLegacyBackup(
+  Map<String, dynamic> backup,
+) {
+  final activity = <String, VoidDayActivity>{};
+  final last30Days = backup['last30Days'];
+  if (last30Days is List) {
+    for (final day in last30Days) {
+      if (day is! Map) continue;
+      final date = day['date']?.toString();
+      final focusSeconds = day['focusSeconds'];
+      if (date == null || focusSeconds is! num || focusSeconds <= 0) continue;
+      activity[date] = VoidDayActivity(
+        date: _parseDateKey(date),
+        focusSeconds: focusSeconds.toInt(),
+      );
+    }
+  }
+  return activity;
+}
+
+Map<String, dynamic> normalizeVoidBackup(Map<String, dynamic> backup) {
+  if (!isLegacyVoidBackup(backup)) {
+    return backup;
+  }
+
+  return {
+    'formatVersion': 0,
+    'exportedAt': backup['exportedAt'],
+    'appVersion': backup['appVersion'],
+    'statistics': {
+      'completedSessions': backup['completedSessions'] ?? 0,
+      'totalFocusSeconds': backup['totalFocusSeconds'] ?? 0,
+      'currentStreak': backup['currentStreak'] ?? 0,
+      'bestStreak': backup['bestStreak'] ?? 0,
+      'todaySessions': backup['todaySessions'] ?? 0,
+      'todaySessionsDate': null,
+      'totalDistractions': backup['totalDistractions'] ?? 0,
+      'preventedDistractionMinutes':
+          backup['preventedDistractionMinutes'] ?? 0,
+      'dailyGoalMinutes': backup['dailyGoalMinutes'] ?? _kDefaultDailyGoalMinutes,
+      'deepWorkModeMinutes':
+          backup['deepWorkModeMinutes'] ?? _kDefaultDeepWorkModeMinutes,
+      'dailyGoalAchieved': (backup['achievements'] as List?)?.any(
+            (entry) =>
+                entry is Map &&
+                entry['id'] == 'daily_goal' &&
+                entry['isUnlocked'] == true,
+          ) ??
+          false,
+      'bonusXp': backup['bonusXp'] ?? 0,
+      'weeklyGoalsWeekKey': null,
+      'weeklyGoalsClaimed': <String>[],
+      'weeklySessionsCount': 0,
+      'dailyActivity': exportDailyActivityJson(
+        dailyActivityFromLegacyBackup(backup),
+      ),
+      'focusModeStats': emptyFocusModeStatsMap(),
+    },
+    'sessions': backup['sessionHistory'] ?? const [],
+    'achievements': backup['achievements'] ?? const [],
+    'projects': const [],
+    'tasks': const [],
+  };
+}
+
+List<VoidSessionRecord> parseVoidBackupSessions(Object? raw) {
+  if (raw is! List) return [];
+  return raw
+      .whereType<Map>()
+      .map(
+        (entry) => VoidSessionRecord.fromJson(
+          entry.map((key, value) => MapEntry(key.toString(), value)),
+        ),
+      )
+      .toList()
+    ..sort((a, b) => b.completedAt.compareTo(a.completedAt));
+}
+
+List<VoidProject> parseVoidBackupProjects(Object? raw) {
+  if (raw is! List) return [];
+  return raw
+      .whereType<Map>()
+      .map(
+        (entry) => VoidProject.fromJson(
+          entry.map((key, value) => MapEntry(key.toString(), value)),
+        ),
+      )
+      .toList();
+}
+
+List<VoidTask> parseVoidBackupTasks(Object? raw) {
+  if (raw is! List) return [];
+  return raw
+      .whereType<Map>()
+      .map(
+        (entry) => VoidTask.fromJson(
+          entry.map((key, value) => MapEntry(key.toString(), value)),
+        ),
+      )
+      .toList();
+}
+
+Map<String, dynamic> buildVoidBackupPayload({
+  required StatsData stats,
+  required Map<String, VoidDayActivity> dailyActivity,
+  required String? todaySessionsDate,
+  required int weeklySessionsCount,
+  required String? weeklyGoalsWeekKey,
+  required Set<String> weeklyGoalsClaimed,
+  required bool dailyGoalAchieved,
+  required List<VoidProject> projects,
+  required List<VoidTask> tasks,
+}) {
+  return {
+    'formatVersion': kVoidBackupFormatVersion,
+    'exportedAt': DateTime.now().toIso8601String(),
+    'appVersion': kVoidAppVersion,
+    'statistics': {
+      'completedSessions': stats.completedSessions,
+      'totalFocusSeconds': stats.totalFocusSeconds,
+      'currentStreak': stats.currentStreak,
+      'bestStreak': stats.bestStreak,
+      'todaySessions': stats.todaySessions,
+      'todaySessionsDate': todaySessionsDate,
+      'totalDistractions': stats.distractions,
+      'preventedDistractionMinutes': stats.preventedDistractionMinutes,
+      'dailyGoalMinutes': stats.dailyGoalMinutes,
+      'deepWorkModeMinutes': stats.deepWorkModeMinutes,
+      'dailyGoalAchieved': dailyGoalAchieved,
+      'bonusXp': stats.bonusXp,
+      'weeklyGoalsWeekKey': weeklyGoalsWeekKey,
+      'weeklyGoalsClaimed': weeklyGoalsClaimed.toList(),
+      'weeklySessionsCount': weeklySessionsCount,
+      'dailyActivity': exportDailyActivityJson(dailyActivity),
+      'focusModeStats': {
+        for (final entry in stats.focusModeStats.entries)
+          '${entry.minutes}': {
+            'sessions': entry.sessions,
+            'focusSeconds': entry.focusSeconds,
+          },
+      },
+    },
+    'sessions': stats.sessionHistory.map((session) => session.toJson()).toList(),
+    'achievements': stats.achievements
+        .map(
+          (achievement) => {
+            'id': achievement.id,
+            'title': achievement.title,
+            'description': achievement.description,
+            'isUnlocked': achievement.isUnlocked,
+          },
+        )
+        .toList(),
+    'projects': projects.map((project) => project.toJson()).toList(),
+    'tasks': tasks.map((task) => task.toJson()).toList(),
+  };
+}
+
 int computeFocusScore(int distractions) {
   return (100 - distractions * 3).clamp(0, 100);
 }
@@ -571,6 +2177,791 @@ void showVoidSnackBar(BuildContext context, String message) {
       ),
     ),
   );
+}
+
+Future<VoidProjectEditorResult?> showVoidProjectEditorDialog(
+  BuildContext context, {
+  String? initialTitle,
+  int? initialColorValue,
+  String? initialIconName,
+  String title = 'Новый проект',
+  String confirmLabel = 'Сохранить',
+}) async {
+  final controller = TextEditingController(text: initialTitle ?? '');
+  var selectedColor =
+      initialColorValue ?? kDefaultProjectColorValue;
+  var selectedIcon = initialIconName ?? kDefaultProjectIconName;
+
+  final result = await showDialog<VoidProjectEditorResult>(
+    context: context,
+    builder: (dialogContext) {
+      return StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            backgroundColor: const Color(0xFF12121A),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: BorderSide(color: kVoidAccent.withValues(alpha: 0.3)),
+            ),
+            title: Text(
+              title,
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.95),
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextField(
+                    controller: controller,
+                    autofocus: true,
+                    maxLength: 120,
+                    style: TextStyle(color: Colors.white.withValues(alpha: 0.9)),
+                    decoration: InputDecoration(
+                      hintText: 'Название проекта',
+                      hintStyle:
+                          TextStyle(color: Colors.white.withValues(alpha: 0.35)),
+                      counterStyle:
+                          TextStyle(color: Colors.white.withValues(alpha: 0.35)),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(
+                          color: kVoidAccent.withValues(alpha: 0.35),
+                        ),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: kVoidAccent),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Text(
+                    'Цвет',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.white.withValues(alpha: 0.45),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: kVoidProjectColorValues.map((colorValue) {
+                      final selected = selectedColor == colorValue;
+                      return InkWell(
+                        onTap: () =>
+                            setDialogState(() => selectedColor = colorValue),
+                        borderRadius: BorderRadius.circular(20),
+                        child: Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Color(colorValue),
+                            border: Border.all(
+                              color: selected
+                                  ? Colors.white.withValues(alpha: 0.9)
+                                  : Colors.transparent,
+                              width: 2,
+                            ),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 14),
+                  Text(
+                    'Иконка',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.white.withValues(alpha: 0.45),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: kVoidProjectTemplates.map((template) {
+                      final selected = selectedIcon == template.id;
+                      return InkWell(
+                        onTap: () {
+                          setDialogState(() {
+                            selectedIcon = template.id;
+                            selectedColor = template.colorValue;
+                            if (controller.text.trim().isEmpty) {
+                              controller.text = template.defaultTitle;
+                            }
+                          });
+                        },
+                        borderRadius: BorderRadius.circular(10),
+                        child: Container(
+                          width: 44,
+                          height: 44,
+                          decoration: BoxDecoration(
+                            color: selected
+                                ? Color(selectedColor).withValues(alpha: 0.2)
+                                : Colors.white.withValues(alpha: 0.04),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: selected
+                                  ? Color(selectedColor)
+                                      .withValues(alpha: 0.6)
+                                  : kVoidAccent.withValues(alpha: 0.15),
+                            ),
+                          ),
+                          alignment: Alignment.center,
+                          child: Text(
+                            template.emoji,
+                            style: const TextStyle(fontSize: 22),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: Text(
+                  'Отмена',
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.55)),
+                ),
+              ),
+              TextButton(
+                onPressed: () {
+                  final value = controller.text.trim();
+                  if (value.isEmpty) return;
+                  Navigator.pop(
+                    dialogContext,
+                    VoidProjectEditorResult(
+                      title: value,
+                      colorValue: selectedColor,
+                      iconName: selectedIcon,
+                    ),
+                  );
+                },
+                child: Text(
+                  confirmLabel,
+                  style: const TextStyle(color: kVoidAccent),
+                ),
+              ),
+            ],
+          );
+        },
+      );
+    },
+  );
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    controller.dispose();
+  });
+  return result;
+}
+
+Future<VoidTaskEditorResult?> showVoidTaskEditorDialog(
+  BuildContext context, {
+  String? initialTitle,
+  String? initialDescription,
+  bool initialIsCompleted = false,
+  int? initialEstimatedSessions,
+  String? initialProjectId,
+  String title = 'Новая задача',
+  String confirmLabel = 'Сохранить',
+}) async {
+  await TasksService.instance.load(force: true);
+  final controller = TextEditingController(text: initialTitle ?? '');
+  final descriptionController =
+      TextEditingController(text: initialDescription ?? '');
+  String? selectedProjectId = initialProjectId;
+  var isCompleted = initialIsCompleted;
+  var estimatedSessions =
+      initialEstimatedSessions ?? kDefaultTaskEstimatedSessions;
+
+  final result = await showDialog<VoidTaskEditorResult>(
+    context: context,
+    builder: (dialogContext) {
+      return StatefulBuilder(
+        builder: (context, setDialogState) {
+          final projects = TasksService.instance.projects;
+
+          return AlertDialog(
+            backgroundColor: const Color(0xFF12121A),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: BorderSide(color: kVoidAccent.withValues(alpha: 0.3)),
+            ),
+            title: Text(
+              title,
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.95),
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextField(
+                    controller: controller,
+                    autofocus: true,
+                    maxLength: 120,
+                    style: TextStyle(color: Colors.white.withValues(alpha: 0.9)),
+                    decoration: InputDecoration(
+                      hintText: 'Название задачи',
+                      hintStyle:
+                          TextStyle(color: Colors.white.withValues(alpha: 0.35)),
+                      counterStyle:
+                          TextStyle(color: Colors.white.withValues(alpha: 0.35)),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(
+                          color: kVoidAccent.withValues(alpha: 0.35),
+                        ),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: kVoidAccent),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: descriptionController,
+                    maxLength: 500,
+                    maxLines: 3,
+                    style: TextStyle(color: Colors.white.withValues(alpha: 0.9)),
+                    decoration: InputDecoration(
+                      hintText: 'Описание (необязательно)',
+                      hintStyle:
+                          TextStyle(color: Colors.white.withValues(alpha: 0.35)),
+                      counterStyle:
+                          TextStyle(color: Colors.white.withValues(alpha: 0.35)),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(
+                          color: kVoidAccent.withValues(alpha: 0.35),
+                        ),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: kVoidAccent),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Text(
+                    'План сессий',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.white.withValues(alpha: 0.45),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.04),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: kVoidAccent.withValues(alpha: 0.2),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        IconButton(
+                          onPressed: estimatedSessions > 1
+                              ? () => setDialogState(
+                                    () => estimatedSessions -= 1,
+                                  )
+                              : null,
+                          icon: Icon(
+                            Icons.remove_rounded,
+                            color: estimatedSessions > 1
+                                ? kVoidAccent.withValues(alpha: 0.85)
+                                : Colors.white.withValues(alpha: 0.2),
+                          ),
+                        ),
+                        Expanded(
+                          child: Text(
+                            '$estimatedSessions '
+                            '${formatVoidSessionCountWord(estimatedSessions)}',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w500,
+                              color: Colors.white.withValues(alpha: 0.9),
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: estimatedSessions < 99
+                              ? () => setDialogState(
+                                    () => estimatedSessions += 1,
+                                  )
+                              : null,
+                          icon: Icon(
+                            Icons.add_rounded,
+                            color: estimatedSessions < 99
+                                ? kVoidAccent.withValues(alpha: 0.85)
+                                : Colors.white.withValues(alpha: 0.2),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Text(
+                    'Статус',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.white.withValues(alpha: 0.45),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      _VoidProjectChip(
+                        label: 'Активна',
+                        selected: !isCompleted,
+                        onTap: () {
+                          setDialogState(() => isCompleted = false);
+                        },
+                      ),
+                      _VoidProjectChip(
+                        label: 'Завершена',
+                        selected: isCompleted,
+                        onTap: () {
+                          setDialogState(() => isCompleted = true);
+                        },
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  Text(
+                    'Проект',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.white.withValues(alpha: 0.45),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      _VoidProjectChip(
+                        label: 'Без проекта',
+                        selected: selectedProjectId == null,
+                        onTap: () {
+                          setDialogState(() => selectedProjectId = null);
+                        },
+                      ),
+                      ...projects.map(
+                        (project) => _VoidProjectChip(
+                          label: project.title,
+                          selected: selectedProjectId == project.id,
+                          onTap: () {
+                            setDialogState(() => selectedProjectId = project.id);
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: Text(
+                  'Отмена',
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.55)),
+                ),
+              ),
+              TextButton(
+                onPressed: () {
+                  final value = controller.text.trim();
+                  if (value.isEmpty) return;
+                  Navigator.pop(
+                    dialogContext,
+                    VoidTaskEditorResult(
+                      title: value,
+                      description: descriptionController.text.trim(),
+                      isCompleted: isCompleted,
+                      estimatedSessions: estimatedSessions,
+                      projectId: selectedProjectId,
+                    ),
+                  );
+                },
+                child: Text(
+                  confirmLabel,
+                  style: const TextStyle(color: kVoidAccent),
+                ),
+              ),
+            ],
+          );
+        },
+      );
+    },
+  );
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    controller.dispose();
+  });
+  return result;
+}
+
+class _VoidProjectChip extends StatelessWidget {
+  const _VoidProjectChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Ink(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: selected
+                ? kVoidAccent.withValues(alpha: 0.16)
+                : Colors.white.withValues(alpha: 0.04),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: selected
+                  ? kVoidAccent.withValues(alpha: 0.45)
+                  : kVoidAccent.withValues(alpha: 0.15),
+            ),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              color: selected
+                  ? kVoidAccent
+                  : Colors.white.withValues(alpha: 0.75),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+Future<VoidTaskSelection?> showVoidTaskPicker(BuildContext context) async {
+  await TasksService.instance.load(force: true);
+  if (!context.mounted) return null;
+
+  String? selectedTaskId;
+  var withoutTaskSelected = true;
+
+  return showModalBottomSheet<VoidTaskSelection>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: const Color(0xFF12121A),
+    shape: RoundedRectangleBorder(
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+      side: BorderSide(color: kVoidAccent.withValues(alpha: 0.28)),
+    ),
+    builder: (sheetContext) {
+      return StatefulBuilder(
+        builder: (context, setSheetState) {
+          return SafeArea(
+            child: Padding(
+              padding: EdgeInsets.only(
+                left: 20,
+                right: 20,
+                top: 12,
+                bottom: 20 + MediaQuery.viewInsetsOf(context).bottom,
+              ),
+              child: ListenableBuilder(
+                listenable: TasksService.instance,
+                builder: (context, _) {
+                  final store = TasksService.instance;
+                  final tasks = store.activeTasks;
+                  final projects = store.projects;
+
+                  return Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Center(
+                        child: Container(
+                          width: 36,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.18),
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      Text(
+                        'Выберите задачу',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.white.withValues(alpha: 0.95),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Сессия будет привязана к выбранной задаче',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.white.withValues(alpha: 0.45),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      _VoidTaskPickerTile(
+                        title: 'Без задачи',
+                        subtitle: 'Сессия без привязки',
+                        selected: withoutTaskSelected,
+                        onTap: () {
+                          setSheetState(() {
+                            withoutTaskSelected = true;
+                            selectedTaskId = null;
+                          });
+                        },
+                      ),
+                      if (tasks.isNotEmpty) ...[
+                        for (final project in projects) ...[
+                          if (store.tasksForProject(project.id, activeOnly: true)
+                              .isNotEmpty) ...[
+                            const SizedBox(height: 12),
+                            Text(
+                              '${project.emoji} ${project.title}',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.white.withValues(alpha: 0.4),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            ...store
+                                .tasksForProject(project.id, activeOnly: true)
+                                .map(
+                              (task) => Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: _VoidTaskPickerTile(
+                                  title: task.title,
+                                  subtitle: task.sessionProgressLabel,
+                                  selected: !withoutTaskSelected &&
+                                      selectedTaskId == task.id,
+                                  onTap: () {
+                                    setSheetState(() {
+                                      withoutTaskSelected = false;
+                                      selectedTaskId = task.id;
+                                    });
+                                  },
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                        if (store
+                            .tasksForProject(null, activeOnly: true)
+                            .isNotEmpty) ...[
+                          const SizedBox(height: 12),
+                          Text(
+                            'Без проекта',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: Colors.white.withValues(alpha: 0.4),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          ...store.tasksForProject(null, activeOnly: true).map(
+                            (task) => Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: _VoidTaskPickerTile(
+                                title: task.title,
+                                subtitle: task.sessionProgressLabel,
+                                selected: !withoutTaskSelected &&
+                                    selectedTaskId == task.id,
+                                onTap: () {
+                                  setSheetState(() {
+                                    withoutTaskSelected = false;
+                                    selectedTaskId = task.id;
+                                  });
+                                },
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                      const SizedBox(height: 12),
+                      TextButton.icon(
+                        onPressed: () async {
+                          final draft = await showVoidTaskEditorDialog(
+                            sheetContext,
+                          );
+                          if (draft == null) return;
+                          final created = await TasksService.instance.addTask(
+                            draft.title,
+                            projectId: draft.projectId,
+                            description: draft.description,
+                            isCompleted: draft.isCompleted,
+                            estimatedSessions: draft.estimatedSessions,
+                          );
+                          if (created != null) {
+                            setSheetState(() {
+                              withoutTaskSelected = false;
+                              selectedTaskId = created.id;
+                            });
+                          }
+                        },
+                        icon: Icon(
+                          Icons.add_rounded,
+                          size: 18,
+                          color: kVoidAccent.withValues(alpha: 0.85),
+                        ),
+                        label: const Text(
+                          'Добавить задачу',
+                          style: TextStyle(color: kVoidAccent),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton(
+                          onPressed: () {
+                            if (withoutTaskSelected) {
+                              Navigator.pop(
+                                sheetContext,
+                                VoidTaskSelection.withoutTask,
+                              );
+                              return;
+                            }
+                            final task =
+                                TasksService.instance.taskById(selectedTaskId);
+                            if (task == null) return;
+                            Navigator.pop(
+                              sheetContext,
+                              VoidTaskSelection(
+                                taskId: task.id,
+                                taskTitle: task.title,
+                              ),
+                            );
+                          },
+                          style: FilledButton.styleFrom(
+                            backgroundColor: kVoidAccent,
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          child: const Text(
+                            'Продолжить',
+                            style: TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          );
+        },
+      );
+    },
+  );
+}
+
+class _VoidTaskPickerTile extends StatelessWidget {
+  const _VoidTaskPickerTile({
+    required this.title,
+    required this.subtitle,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String title;
+  final String subtitle;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Ink(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: selected
+                ? kVoidAccent.withValues(alpha: 0.14)
+                : Colors.white.withValues(alpha: 0.04),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: selected
+                  ? kVoidAccent.withValues(alpha: 0.55)
+                  : kVoidAccent.withValues(alpha: 0.18),
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                selected
+                    ? Icons.radio_button_checked_rounded
+                    : Icons.radio_button_off_rounded,
+                size: 20,
+                color: selected
+                    ? kVoidAccent
+                    : Colors.white.withValues(alpha: 0.35),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.white.withValues(alpha: 0.92),
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.white.withValues(alpha: 0.42),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 Future<void> launchVoidExternalUri(
@@ -638,6 +3029,979 @@ Future<void> launchVoidStoreListing(BuildContext context) {
   );
 }
 
+bool shouldShowFirstLaunchFeedback({
+  required int completedSessions,
+  required bool alreadyShown,
+  int threshold = kFirstLaunchFeedbackSessionThreshold,
+}) {
+  return !alreadyShown && completedSessions >= threshold;
+}
+
+Future<void> launchVoidFeatureFeedback(BuildContext context) {
+  return launchVoidMailFeedback(
+    context,
+    subject: 'VOID — предложение функции',
+    body: buildVoidFeedbackBody(
+      'Опишите идею:\n'
+      '1. Какую функцию хотите\n'
+      '2. Зачем она нужна\n'
+      '3. Как вы будете её использовать',
+    ),
+  );
+}
+
+Future<void> launchVoidBugFeedback(BuildContext context) {
+  return launchVoidMailFeedback(
+    context,
+    subject: 'VOID — сообщение об ошибке',
+    body: buildVoidFeedbackBody(
+      'Опишите ошибку:\n'
+      '1. Что вы делали\n'
+      '2. Что произошло\n'
+      '3. Как должно работать',
+    ),
+  );
+}
+
+class VoidSessionCompleteData {
+  const VoidSessionCompleteData({
+    required this.elapsedSeconds,
+    required this.focusScore,
+    required this.xpEarned,
+    required this.currentStreak,
+    required this.todayFocusSeconds,
+    required this.dailyGoalMinutes,
+    required this.dailyGoalProgress,
+    required this.isDailyGoalCompleted,
+    this.taskSelection,
+    this.focusSecondsOnTask,
+  });
+
+  final int elapsedSeconds;
+  final int focusScore;
+  final int xpEarned;
+  final int currentStreak;
+  final int todayFocusSeconds;
+  final int dailyGoalMinutes;
+  final double dailyGoalProgress;
+  final bool isDailyGoalCompleted;
+  final VoidTaskSelection? taskSelection;
+  final int? focusSecondsOnTask;
+}
+
+Future<void> showVoidSessionCompleteDialog({
+  required BuildContext context,
+  required VoidSessionCompleteData data,
+  required VoidCallback onDone,
+}) {
+  return showGeneralDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    barrierColor: Colors.black.withValues(alpha: 0.78),
+    transitionDuration: const Duration(milliseconds: 380),
+    pageBuilder: (dialogContext, animation, secondaryAnimation) {
+      return VoidSessionCompleteDialog(
+        data: data,
+        onDone: () {
+          Navigator.pop(dialogContext);
+          onDone();
+        },
+      );
+    },
+    transitionBuilder: (context, animation, secondaryAnimation, child) {
+      final curve = CurvedAnimation(
+        parent: animation,
+        curve: Curves.easeOutCubic,
+      );
+      return FadeTransition(
+        opacity: curve,
+        child: ScaleTransition(
+          scale: Tween<double>(begin: 0.9, end: 1).animate(curve),
+          child: child,
+        ),
+      );
+    },
+  );
+}
+
+class VoidSessionCompleteDialog extends StatefulWidget {
+  const VoidSessionCompleteDialog({
+    super.key,
+    required this.data,
+    required this.onDone,
+  });
+
+  final VoidSessionCompleteData data;
+  final VoidCallback onDone;
+
+  @override
+  State<VoidSessionCompleteDialog> createState() =>
+      _VoidSessionCompleteDialogState();
+}
+
+class _VoidSessionCompleteDialogState extends State<VoidSessionCompleteDialog>
+    with TickerProviderStateMixin {
+  late final AnimationController _contentController;
+  late final AnimationController _goalProgressController;
+  late final AnimationController _streakProgressController;
+  late final AnimationController _xpController;
+  late final AnimationController _focusPulseController;
+  late Animation<double> _goalProgressAnimation;
+  late Animation<double> _streakProgressAnimation;
+  late Animation<int> _xpAnimation;
+  late final Animation<double> _focusScaleAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _contentController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    );
+    _goalProgressController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1100),
+    );
+    _streakProgressController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    );
+    _xpController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    );
+    _focusPulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    );
+
+    _goalProgressAnimation = Tween<double>(
+      begin: 0,
+      end: widget.data.dailyGoalProgress.clamp(0.0, 1.0),
+    ).animate(
+      CurvedAnimation(
+        parent: _goalProgressController,
+        curve: Curves.easeOutCubic,
+      ),
+    );
+    _streakProgressAnimation = Tween<double>(
+      begin: 0,
+      end: (widget.data.currentStreak / 7).clamp(0.0, 1.0),
+    ).animate(
+      CurvedAnimation(
+        parent: _streakProgressController,
+        curve: Curves.easeOutCubic,
+      ),
+    );
+    _xpAnimation = IntTween(begin: 0, end: widget.data.xpEarned).animate(
+      CurvedAnimation(parent: _xpController, curve: Curves.easeOutCubic),
+    );
+    _focusScaleAnimation = TweenSequence<double>([
+      TweenSequenceItem(
+        tween: Tween(begin: 0.85, end: 1.08)
+            .chain(CurveTween(curve: Curves.easeOut)),
+        weight: 45,
+      ),
+      TweenSequenceItem(
+        tween: Tween(begin: 1.08, end: 1.0)
+            .chain(CurveTween(curve: Curves.easeInOut)),
+        weight: 55,
+      ),
+    ]).animate(_focusPulseController);
+
+    _contentController.forward();
+    _goalProgressController.forward();
+    _streakProgressController.forward();
+    _xpController.forward();
+    _focusPulseController.forward();
+  }
+
+  @override
+  void dispose() {
+    _contentController.dispose();
+    _goalProgressController.dispose();
+    _streakProgressController.dispose();
+    _xpController.dispose();
+    _focusPulseController.dispose();
+    super.dispose();
+  }
+
+  Animation<double> _stagger(int index) {
+    final start = 0.08 + index * 0.1;
+    final end = (start + 0.42).clamp(0.0, 1.0);
+    return CurvedAnimation(
+      parent: _contentController,
+      curve: Interval(start, end, curve: Curves.easeOutCubic),
+    );
+  }
+
+  String _streakDaysLabel(int count) {
+    final mod10 = count % 10;
+    final mod100 = count % 100;
+    if (mod100 >= 11 && mod100 <= 14) return 'дней';
+    if (mod10 == 1) return 'день';
+    if (mod10 >= 2 && mod10 <= 4) return 'дня';
+    return 'дней';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final data = widget.data;
+    final taskLabel = data.taskSelection?.hasTask == true
+        ? data.taskSelection!.taskTitle!
+        : null;
+    final goalAccent =
+        data.isDailyGoalCompleted ? kVoidGoalComplete : kVoidAccent;
+
+    return Material(
+      color: Colors.transparent,
+      child: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 16),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 420),
+              child: AnimatedBuilder(
+              animation: Listenable.merge([
+                _contentController,
+                _goalProgressController,
+                _streakProgressController,
+                _xpController,
+                _focusPulseController,
+              ]),
+              builder: (context, child) {
+                return Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.fromLTRB(20, 22, 20, 18),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF12121A),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: kVoidAccent.withValues(alpha: 0.35),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: kVoidAccent.withValues(alpha: 0.18),
+                        blurRadius: 36,
+                        spreadRadius: 2,
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      FadeTransition(
+                        opacity: _stagger(0),
+                        child: SlideTransition(
+                          position: Tween<Offset>(
+                            begin: const Offset(0, 0.08),
+                            end: Offset.zero,
+                          ).animate(_stagger(0)),
+                          child: Container(
+                            width: 56,
+                            height: 56,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: kVoidAccent.withValues(alpha: 0.14),
+                              border: Border.all(
+                                color: kVoidAccent.withValues(alpha: 0.45),
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: kVoidAccent.withValues(alpha: 0.25),
+                                  blurRadius: 18,
+                                ),
+                              ],
+                            ),
+                            child: Icon(
+                              Icons.check_rounded,
+                              color: kVoidAccent.withValues(alpha: 0.95),
+                              size: 30,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      FadeTransition(
+                        opacity: _stagger(1),
+                        child: Text(
+                          'Сессия завершена',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w500,
+                            color: Colors.white.withValues(alpha: 0.96),
+                          ),
+                        ),
+                      ),
+                      if (taskLabel != null) ...[
+                        const SizedBox(height: 10),
+                        FadeTransition(
+                          opacity: _stagger(1),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.05),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: kVoidAccent.withValues(alpha: 0.2),
+                              ),
+                            ),
+                            child: Text(
+                              taskLabel,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.white.withValues(alpha: 0.7),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 18),
+                      FadeTransition(
+                        opacity: _stagger(2),
+                        child: SlideTransition(
+                          position: Tween<Offset>(
+                            begin: const Offset(0, 0.06),
+                            end: Offset.zero,
+                          ).animate(_stagger(2)),
+                          child: _VoidSessionCompleteStatTile(
+                            label: 'Длительность',
+                            value: formatFocusDuration(data.elapsedSeconds),
+                            prominent: true,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      FadeTransition(
+                        opacity: _stagger(3),
+                        child: SlideTransition(
+                          position: Tween<Offset>(
+                            begin: const Offset(0, 0.06),
+                            end: Offset.zero,
+                          ).animate(_stagger(3)),
+                          child: Transform.scale(
+                            scale: _focusScaleAnimation.value,
+                            child: _VoidSessionCompleteStatTile(
+                              label: 'Фокус-счёт',
+                              value: formatFocusScore(data.focusScore),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      FadeTransition(
+                        opacity: _stagger(4),
+                        child: SlideTransition(
+                          position: Tween<Offset>(
+                            begin: const Offset(0, 0.06),
+                            end: Offset.zero,
+                          ).animate(_stagger(4)),
+                          child: _VoidSessionCompleteStatTile(
+                            label: 'Получено XP',
+                            value: '+${_xpAnimation.value}',
+                            accent: true,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      FadeTransition(
+                        opacity: _stagger(5),
+                        child: _VoidSessionCompleteProgressSection(
+                          title: 'Серия',
+                          subtitle: data.currentStreak > 0
+                              ? '${data.currentStreak} ${_streakDaysLabel(data.currentStreak)} подряд'
+                              : 'Начните серию завтра',
+                          progress: _streakProgressAnimation.value,
+                          percentLabel: data.currentStreak > 0
+                              ? '${data.currentStreak}'
+                              : '0',
+                          accent: data.currentStreak > 0
+                              ? kVoidAccent
+                              : Colors.white.withValues(alpha: 0.35),
+                          icon: Icons.local_fire_department_rounded,
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      FadeTransition(
+                        opacity: _stagger(6),
+                        child: _VoidSessionCompleteProgressSection(
+                          title: 'Цель дня',
+                          subtitle: formatDailyGoalProgress(
+                            data.todayFocusSeconds,
+                            data.dailyGoalMinutes,
+                          ),
+                          progress: _goalProgressAnimation.value,
+                          percentLabel:
+                              '${formatDailyGoalPercent(_goalProgressAnimation.value)}%',
+                          accent: goalAccent,
+                          icon: data.isDailyGoalCompleted
+                              ? Icons.check_circle_rounded
+                              : Icons.flag_rounded,
+                          completed: data.isDailyGoalCompleted,
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      FadeTransition(
+                        opacity: _stagger(7),
+                        child: SizedBox(
+                          width: double.infinity,
+                          child: FilledButton(
+                            onPressed: widget.onDone,
+                            style: FilledButton.styleFrom(
+                              backgroundColor: kVoidAccent,
+                              foregroundColor: Colors.white,
+                              elevation: 0,
+                              minimumSize: const Size.fromHeight(48),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                            ),
+                            child: const Text(
+                              'Готово',
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    ),
+    );
+  }
+}
+
+class _VoidSessionCompleteStatTile extends StatelessWidget {
+  const _VoidSessionCompleteStatTile({
+    required this.label,
+    required this.value,
+    this.prominent = false,
+    this.accent = false,
+  });
+
+  final String label;
+  final String value;
+  final bool prominent;
+  final bool accent;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.symmetric(
+        horizontal: 16,
+        vertical: prominent ? 16 : 13,
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: accent
+              ? kVoidAccent.withValues(alpha: 0.35)
+              : prominent
+                  ? kVoidAccent.withValues(alpha: 0.22)
+                  : Colors.white.withValues(alpha: 0.08),
+        ),
+        boxShadow: prominent
+            ? [
+                BoxShadow(
+                  color: kVoidAccent.withValues(alpha: 0.1),
+                  blurRadius: 14,
+                ),
+              ]
+            : null,
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.white.withValues(alpha: 0.55),
+              ),
+            ),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: prominent ? 20 : 16,
+              fontWeight: FontWeight.w500,
+              color: accent
+                  ? kVoidAccent
+                  : prominent
+                      ? kVoidAccent.withValues(alpha: 0.95)
+                      : Colors.white.withValues(alpha: 0.92),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _VoidSessionCompleteProgressSection extends StatelessWidget {
+  const _VoidSessionCompleteProgressSection({
+    required this.title,
+    required this.subtitle,
+    required this.progress,
+    required this.percentLabel,
+    required this.accent,
+    required this.icon,
+    this.completed = false,
+  });
+
+  final String title;
+  final String subtitle;
+  final double progress;
+  final String percentLabel;
+  final Color accent;
+  final IconData icon;
+  final bool completed;
+
+  @override
+  Widget build(BuildContext context) {
+    final clampedProgress = progress.clamp(0.0, 1.0);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      decoration: BoxDecoration(
+        color: completed
+            ? kVoidGoalComplete.withValues(alpha: 0.05)
+            : Colors.white.withValues(alpha: 0.03),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: accent.withValues(alpha: 0.22)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 16, color: accent.withValues(alpha: 0.9)),
+              const SizedBox(width: 8),
+              Text(
+                title,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.white.withValues(alpha: 0.5),
+                ),
+              ),
+              const Spacer(),
+              Text(
+                percentLabel,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: accent.withValues(alpha: 0.9),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            subtitle,
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w400,
+              color: Colors.white.withValues(alpha: 0.88),
+            ),
+          ),
+          const SizedBox(height: 10),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: LinearProgressIndicator(
+              value: clampedProgress,
+              minHeight: 6,
+              backgroundColor: Colors.white.withValues(alpha: 0.08),
+              valueColor: AlwaysStoppedAnimation(accent),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+Future<void> showVoidFirstLaunchFeedbackDialog(BuildContext context) async {
+  await showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    builder: (dialogContext) {
+      Future<void> closeWithAction(Future<void> Function()? action) async {
+        await StatsService.instance.markFirstLaunchFeedbackShown();
+        if (dialogContext.mounted) {
+          Navigator.pop(dialogContext);
+        }
+        if (action != null && context.mounted) {
+          await action();
+        }
+      }
+
+      return AlertDialog(
+        backgroundColor: const Color(0xFF12121A),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: kVoidAccent.withValues(alpha: 0.3)),
+        ),
+        title: Column(
+          children: [
+            Text(
+              'VOID',
+              style: TextStyle(
+                color: kVoidAccent,
+                fontWeight: FontWeight.w300,
+                letterSpacing: 6,
+                fontSize: 22,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'Как вам VOID?',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.95),
+                fontWeight: FontWeight.w500,
+                fontSize: 18,
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          'Вы завершили $kFirstLaunchFeedbackSessionThreshold сессии. '
+          'Поделитесь впечатлениями — это поможет сделать VOID лучше.',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.62),
+            height: 1.45,
+          ),
+        ),
+        actionsAlignment: MainAxisAlignment.center,
+        actions: [
+          SizedBox(
+            width: double.infinity,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                FilledButton(
+                  onPressed: () => closeWithAction(() async {
+                    if (context.mounted) {
+                      showVoidSnackBar(context, 'Спасибо за отзыв!');
+                    }
+                  }),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: kVoidAccent,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Text(
+                    'Нравится',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                OutlinedButton(
+                  onPressed: () => closeWithAction(
+                    () => launchVoidFeatureFeedback(context),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white.withValues(alpha: 0.88),
+                    side: BorderSide(color: kVoidAccent.withValues(alpha: 0.35)),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Text(
+                    'Есть идеи',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: () => closeWithAction(
+                    () => launchVoidBugFeedback(context),
+                  ),
+                  child: Text(
+                    'Сообщить о проблеме',
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.55),
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    },
+  );
+}
+
+bool shouldScheduleDailyReminder({
+  required int todayFocusSeconds,
+  required int todaySessions,
+}) {
+  return todayFocusSeconds <= 0 && todaySessions <= 0;
+}
+
+bool shouldScheduleStreakWarning({
+  required int currentStreak,
+  required int todayFocusSeconds,
+  required int todaySessions,
+}) {
+  return currentStreak > 0 &&
+      todayFocusSeconds <= 0 &&
+      todaySessions <= 0;
+}
+
+({int hour, int minute}) computeStreakWarningTime({
+  required int reminderHour,
+  required int reminderMinute,
+}) {
+  var hour = reminderHour + 3;
+  var minute = reminderMinute;
+  if (hour < 20) {
+    hour = 20;
+    minute = 0;
+  }
+  if (hour > 22 || (hour == 22 && minute > 0)) {
+    hour = 22;
+    minute = 0;
+  }
+  return (hour: hour, minute: minute);
+}
+
+String formatNotificationTime(int hour, int minute) {
+  return '${hour.toString().padLeft(2, '0')}:'
+      '${minute.toString().padLeft(2, '0')}';
+}
+
+class VoidNotificationService extends ChangeNotifier {
+  VoidNotificationService._();
+
+  static final VoidNotificationService instance = VoidNotificationService._();
+
+  final FlutterLocalNotificationsPlugin _plugin =
+      FlutterLocalNotificationsPlugin();
+
+  bool enabled = true;
+  int hour = kDefaultNotificationHour;
+  int minute = kDefaultNotificationMinute;
+  bool isInitialized = false;
+
+  static const _androidSettings = AndroidInitializationSettings(
+    '@mipmap/ic_launcher',
+  );
+
+  static const _notificationDetails = NotificationDetails(
+    android: AndroidNotificationDetails(
+      kVoidNotificationChannelId,
+      'VOID Напоминания',
+      channelDescription: 'Умные напоминания о фокусе и серии',
+      importance: Importance.high,
+      priority: Priority.high,
+      color: Color(0xFF8B5CF6),
+      icon: '@mipmap/ic_launcher',
+    ),
+  );
+
+  Future<void> initialize() async {
+    if (isInitialized) return;
+
+    try {
+      tz_data.initializeTimeZones();
+      final timeZoneInfo = await FlutterTimezone.getLocalTimezone();
+      tz.setLocalLocation(tz.getLocation(timeZoneInfo.identifier));
+
+      await _plugin.initialize(
+        const InitializationSettings(android: _androidSettings),
+      );
+      await loadPrefs();
+      isInitialized = true;
+    } catch (_) {
+      isInitialized = false;
+    }
+  }
+
+  Future<void> loadPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      enabled = prefs.getBool(_kNotificationsEnabled) ?? true;
+      hour = prefs.getInt(_kNotificationHour) ?? kDefaultNotificationHour;
+      minute = prefs.getInt(_kNotificationMinute) ?? kDefaultNotificationMinute;
+      notifyListeners();
+    } catch (_) {}
+  }
+
+  Future<void> setEnabled(bool value) async {
+    enabled = value;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kNotificationsEnabled, value);
+    notifyListeners();
+
+    if (value) {
+      await _requestPermission();
+    }
+    await rescheduleFromStats(StatsService.instance.data);
+  }
+
+  Future<void> setReminderTime({
+    required int newHour,
+    required int newMinute,
+  }) async {
+    hour = newHour;
+    minute = newMinute;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_kNotificationHour, newHour);
+    await prefs.setInt(_kNotificationMinute, newMinute);
+    notifyListeners();
+    await rescheduleFromStats(StatsService.instance.data);
+  }
+
+  Future<void> _requestPermission() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
+    try {
+      final androidPlugin =
+          _plugin.resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin>();
+      await androidPlugin?.requestNotificationsPermission();
+    } catch (_) {}
+  }
+
+  Future<void> rescheduleFromStats(StatsData stats) async {
+    if (!isInitialized) return;
+
+    try {
+      await _plugin.cancel(kVoidNotificationDailyReminderId);
+      await _plugin.cancel(kVoidNotificationStreakWarningId);
+      if (!enabled) return;
+
+      final now = tz.TZDateTime.now(tz.local);
+      final needsDailyReminder = shouldScheduleDailyReminder(
+        todayFocusSeconds: stats.todayFocusSeconds,
+        todaySessions: stats.todaySessions,
+      );
+
+      if (needsDailyReminder) {
+        final dailyTime = _nextScheduleTime(hour, minute, now);
+        await _scheduleNotification(
+          id: kVoidNotificationDailyReminderId,
+          scheduledDate: dailyTime,
+          body: 'Пора сфокусироваться',
+        );
+
+        if (shouldScheduleStreakWarning(
+          currentStreak: stats.currentStreak,
+          todayFocusSeconds: stats.todayFocusSeconds,
+          todaySessions: stats.todaySessions,
+        )) {
+          final streakParts = computeStreakWarningTime(
+            reminderHour: hour,
+            reminderMinute: minute,
+          );
+          var streakTime = tz.TZDateTime(
+            tz.local,
+            now.year,
+            now.month,
+            now.day,
+            streakParts.hour,
+            streakParts.minute,
+          );
+          if (!streakTime.isAfter(dailyTime)) {
+            streakTime = dailyTime.add(const Duration(hours: 2));
+          }
+          if (streakTime.isAfter(now)) {
+            await _scheduleNotification(
+              id: kVoidNotificationStreakWarningId,
+              scheduledDate: streakTime,
+              body:
+                  'Серия из ${stats.currentStreak} дней может прерваться',
+            );
+          }
+        }
+      } else {
+        final tomorrow = now.add(const Duration(days: 1));
+        final tomorrowTime = tz.TZDateTime(
+          tz.local,
+          tomorrow.year,
+          tomorrow.month,
+          tomorrow.day,
+          hour,
+          minute,
+        );
+        await _scheduleNotification(
+          id: kVoidNotificationDailyReminderId,
+          scheduledDate: tomorrowTime,
+          body: 'Пора сфокусироваться',
+        );
+      }
+    } catch (_) {}
+  }
+
+  tz.TZDateTime _nextScheduleTime(
+    int reminderHour,
+    int reminderMinute,
+    tz.TZDateTime now,
+  ) {
+    var scheduled = tz.TZDateTime(
+      tz.local,
+      now.year,
+      now.month,
+      now.day,
+      reminderHour,
+      reminderMinute,
+    );
+    if (!scheduled.isAfter(now)) {
+      scheduled = scheduled.add(const Duration(days: 1));
+    }
+    return scheduled;
+  }
+
+  Future<void> _scheduleNotification({
+    required int id,
+    required tz.TZDateTime scheduledDate,
+    required String body,
+  }) {
+    return _plugin.zonedSchedule(
+      id,
+      'VOID',
+      body,
+      scheduledDate,
+      _notificationDetails,
+      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+      uiLocalNotificationDateInterpretation:
+          UILocalNotificationDateInterpretation.absoluteTime,
+    );
+  }
+}
+
 class StatsService extends ChangeNotifier {
   StatsService._();
 
@@ -700,10 +4064,144 @@ class StatsService extends ChangeNotifier {
         sessionHistory: [],
         todayFocusSeconds: 0,
         dailyGoalMinutes: _kDefaultDailyGoalMinutes,
+        deepWorkModeMinutes: _kDefaultDeepWorkModeMinutes,
         averageFocusScore: 0,
         last7Days: _buildLast7Days({}),
         last30Days: _buildLast30Days({}),
+        personalRecords: VoidPersonalRecords.empty,
+        bonusXp: 0,
+        weeklyGoals: buildWeeklyGoalsData(
+          sessionHistory: const [],
+          activity: const {},
+          claimedIds: const {},
+          referenceDate: DateTime(2000, 1, 3),
+        ),
+        focusModeStats: VoidFocusModeStats.empty,
       );
+
+  static VoidFocusModeStats _readFocusModeStats(
+    SharedPreferences prefs,
+    List<VoidSessionRecord> sessionHistory,
+  ) {
+    final raw = prefs.getString(_kFocusModeStats);
+    if (raw == null || raw.isEmpty) {
+      return buildFocusModeStatsFromSessions(sessionHistory);
+    }
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) {
+        return buildFocusModeStatsFromSessions(sessionHistory);
+      }
+      return parseFocusModeStatsMap(
+        decoded.map((key, value) => MapEntry(key.toString(), value)),
+      );
+    } catch (_) {
+      return buildFocusModeStatsFromSessions(sessionHistory);
+    }
+  }
+
+  static Future<void> _incrementFocusModeStats(
+    SharedPreferences prefs,
+    int focusModeMinutes,
+    int focusSeconds,
+  ) async {
+    if (focusSeconds <= 0) return;
+    final minutes = VoidDeepWorkMode.resolve(focusModeMinutes).minutes;
+    final raw = prefs.getString(_kFocusModeStats);
+    final stats = raw == null || raw.isEmpty
+        ? buildFocusModeStatsFromSessions(_readSessionHistoryRaw(prefs))
+        : _readFocusModeStats(prefs, const []);
+    final updated = {
+      for (final entry in stats.entries)
+        '${entry.minutes}': {
+          'sessions': entry.sessions,
+          'focusSeconds': entry.focusSeconds,
+        },
+    };
+    final bucket = Map<String, dynamic>.from(
+      updated['$minutes'] as Map? ?? {'sessions': 0, 'focusSeconds': 0},
+    );
+    updated['$minutes'] = {
+      'sessions': ((bucket['sessions'] as num?)?.toInt() ?? 0) + 1,
+      'focusSeconds':
+          ((bucket['focusSeconds'] as num?)?.toInt() ?? 0) + focusSeconds,
+    };
+    await prefs.setString(_kFocusModeStats, jsonEncode(updated));
+  }
+
+  int _readBonusXp(SharedPreferences prefs) => prefs.getInt(_kBonusXp) ?? 0;
+
+  int _readWeeklySessionsCount(SharedPreferences prefs) {
+    final weekKey = _dateKey(weekBoundsContaining(DateTime.now()).start);
+    if (prefs.getString(_kWeeklyGoalsWeekKey) != weekKey) {
+      return 0;
+    }
+    return prefs.getInt(_kWeeklySessionsCount) ?? 0;
+  }
+
+  Future<void> _incrementWeeklySessionsCount(SharedPreferences prefs) async {
+    final weekKey = _dateKey(weekBoundsContaining(DateTime.now()).start);
+    final storedWeekKey = prefs.getString(_kWeeklyGoalsWeekKey);
+    var count = prefs.getInt(_kWeeklySessionsCount) ?? 0;
+    if (storedWeekKey != weekKey) {
+      count = 0;
+    }
+    count++;
+    await prefs.setInt(_kWeeklySessionsCount, count);
+    if (storedWeekKey != weekKey) {
+      await prefs.setString(_kWeeklyGoalsWeekKey, weekKey);
+    }
+  }
+
+  Set<String> _readWeeklyGoalsClaimed(SharedPreferences prefs) {
+    final raw = prefs.getString(_kWeeklyGoalsClaimed);
+    if (raw == null || raw.isEmpty) return {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return {};
+      return decoded.map((entry) => entry.toString()).toSet();
+    } catch (_) {
+      return {};
+    }
+  }
+
+  Future<void> _syncWeeklyGoalRewards(
+    SharedPreferences prefs,
+    List<VoidSessionRecord> sessionHistory,
+    Map<String, VoidDayActivity> activity,
+  ) async {
+    final bounds = weekBoundsContaining(DateTime.now());
+    final weekKey = _dateKey(bounds.start);
+    final storedWeekKey = prefs.getString(_kWeeklyGoalsWeekKey);
+
+    var claimed = storedWeekKey == weekKey
+        ? _readWeeklyGoalsClaimed(prefs)
+        : <String>{};
+
+    final goals = buildWeeklyGoalsProgress(
+      sessionHistory: sessionHistory,
+      activity: activity,
+      claimedIds: claimed,
+      weeklySessionsCount: _readWeeklySessionsCount(prefs),
+    );
+
+    var bonusXp = _readBonusXp(prefs);
+    var changed = storedWeekKey != weekKey;
+
+    for (final goal in goals) {
+      if (goal.isCompleted && !claimed.contains(goal.id)) {
+        bonusXp += goal.xpReward;
+        claimed.add(goal.id);
+        changed = true;
+      }
+    }
+
+    if (!changed) return;
+
+    await prefs.setString(_kWeeklyGoalsWeekKey, weekKey);
+    await prefs.setInt(_kBonusXp, bonusXp);
+    await prefs.setString(_kWeeklyGoalsClaimed, jsonEncode(claimed.toList()));
+  }
 
   static double _computeAverageFocusScore({
     required List<VoidSessionRecord> history,
@@ -782,9 +4280,15 @@ class StatsService extends ChangeNotifier {
 
       final newestIndex = completedSessions - 1 - i;
       DateTime completedAt;
+      String? taskId;
+      String? taskTitle;
+      int? focusModeMinutes;
       if (newestIndex < existing.length) {
         final existingRecord = existing[newestIndex];
         completedAt = existingRecord.completedAt;
+        taskId = existingRecord.taskId;
+        taskTitle = existingRecord.taskTitle;
+        focusModeMinutes = existingRecord.focusModeMinutes;
         if (existingRecord.focusSeconds > 0 &&
             i >= focusSecondsList.length) {
           focusSecondsValue = existingRecord.focusSeconds;
@@ -793,6 +4297,9 @@ class StatsService extends ChangeNotifier {
         completedAt = DateTime.now().subtract(
           Duration(days: completedSessions - 1 - i, minutes: i * 7),
         );
+        focusModeMinutes = VoidDeepWorkMode.resolve(
+          prefs.getInt(_kDeepWorkModeMinutes) ?? _kDefaultDeepWorkModeMinutes,
+        ).minutes;
       }
 
       records.add(
@@ -802,6 +4309,9 @@ class StatsService extends ChangeNotifier {
           distractions: distractionsValue,
           focusScore: computeFocusScore(distractionsValue),
           xp: computeSessionXp(focusSecondsValue, distractionsValue),
+          taskId: taskId,
+          taskTitle: taskTitle,
+          focusModeMinutes: focusModeMinutes,
         ),
       );
     }
@@ -876,21 +4386,21 @@ class StatsService extends ChangeNotifier {
   }
 
   static List<VoidDayActivity> _buildLast7Days(
-    Map<String, int> activity, [
+    Map<String, VoidDayActivity> activity, [
     List<VoidSessionRecord> sessionHistory = const [],
   ]) {
     return _buildLastDays(activity, 7, sessionHistory);
   }
 
   static List<VoidDayActivity> _buildLast30Days(
-    Map<String, int> activity, [
+    Map<String, VoidDayActivity> activity, [
     List<VoidSessionRecord> sessionHistory = const [],
   ]) {
     return _buildLastDays(activity, kVoidFocusCalendarDays, sessionHistory);
   }
 
   static List<VoidDayActivity> _buildLastDays(
-    Map<String, int> activity,
+    Map<String, VoidDayActivity> activity,
     int dayCount,
     List<VoidSessionRecord> sessionHistory,
   ) {
@@ -900,39 +4410,19 @@ class StatsService extends ChangeNotifier {
       final date = DateTime(today.year, today.month, today.day)
           .subtract(Duration(days: dayCount - 1 - index));
       final key = _dateKey(date);
+      final stored = activity[key];
       final sessionDay = sessionDays[key];
-      final focusSeconds = activity[key] ?? sessionDay?.focusSeconds ?? 0;
-      final sessionsCount = sessionDay?.sessionsCount ?? 0;
-      final xpEarned = sessionDay != null && sessionsCount > 0
-          ? sessionDay.xpEarned
-          : focusSeconds > 0
-              ? focusSeconds ~/ 60
-              : 0;
-      return VoidDayActivity(
-        date: date,
-        focusSeconds: focusSeconds,
-        sessionsCount: sessionsCount,
-        distractions: sessionDay?.distractions ?? 0,
-        averageFocusScore: sessionDay?.averageFocusScore ?? 0,
-        xpEarned: xpEarned,
-      );
-    });
-  }
+      final focusSeconds =
+          stored?.focusSeconds ?? sessionDay?.focusSeconds ?? 0;
 
-  static Map<String, int> _parseActivity(String? raw) {
-    if (raw == null || raw.isEmpty) return {};
-    try {
-      final decoded = jsonDecode(raw);
-      if (decoded is! Map) return {};
-      return decoded.map(
-        (key, value) => MapEntry(
-          key.toString(),
-          value is num ? value.toInt() : int.tryParse('$value') ?? 0,
-        ),
-      );
-    } catch (_) {
-      return {};
-    }
+      if (stored != null && stored.sessionsCount > 0) {
+        return stored.copyWith(date: date, focusSeconds: focusSeconds);
+      }
+      if (sessionDay != null) {
+        return sessionDay.copyWith(date: date, focusSeconds: focusSeconds);
+      }
+      return VoidDayActivity(date: date, focusSeconds: focusSeconds);
+    });
   }
 
   Future<void> load({bool force = false}) {
@@ -965,11 +4455,18 @@ class StatsService extends ChangeNotifier {
           _kTotalFocusSeconds,
           (prefs.getInt(_kTotalFocusMinutes) ?? 0) * 60,
         );
-        final activity = _parseActivity(prefs.getString(_kDailyActivity));
+        final activity = parseDailyActivityMap(prefs.getString(_kDailyActivity));
         if (activity.isNotEmpty) {
-          final migrated =
-              activity.map((key, value) => MapEntry(key, value * 60));
-          await prefs.setString(_kDailyActivity, jsonEncode(migrated));
+          final migrated = activity.map(
+            (key, day) => MapEntry(
+              key,
+              day.copyWith(focusSeconds: day.focusSeconds * 60),
+            ),
+          );
+          await prefs.setString(
+            _kDailyActivity,
+            encodeDailyActivityMap(migrated),
+          );
         }
       } else {
         await prefs.setInt(
@@ -998,7 +4495,7 @@ class StatsService extends ChangeNotifier {
 
   static Future<({int current, int best})> _syncStreakFromActivity(
     SharedPreferences prefs,
-    Map<String, int> activity,
+    Map<String, VoidDayActivity> activity,
   ) async {
     final current = computeCurrentStreakFromActivity(activity);
     final computedBest = computeBestStreakFromActivity(activity);
@@ -1013,7 +4510,7 @@ class StatsService extends ChangeNotifier {
     }
 
     final today = _dateKey(DateTime.now());
-    if (activity[today] != null && activity[today]! > 0) {
+    if ((activity[today]?.focusSeconds ?? 0) > 0) {
       await prefs.setString(_kLastActiveDate, today);
     }
 
@@ -1022,13 +4519,60 @@ class StatsService extends ChangeNotifier {
 
   int _readTodayFocusSeconds(
     SharedPreferences prefs,
-    Map<String, int> activity,
+    Map<String, VoidDayActivity> activity,
   ) {
-    return activity[_dateKey(DateTime.now())] ?? 0;
+    return activity[_dateKey(DateTime.now())]?.focusSeconds ?? 0;
   }
 
   int _readDailyGoalMinutes(SharedPreferences prefs) {
     return prefs.getInt(_kDailyGoalMinutes) ?? _kDefaultDailyGoalMinutes;
+  }
+
+  int _readDeepWorkModeMinutes(SharedPreferences prefs) {
+    final minutes = prefs.getInt(_kDeepWorkModeMinutes) ??
+        _kDefaultDeepWorkModeMinutes;
+    return VoidDeepWorkMode.forMinutes(minutes)?.minutes ??
+        _kDefaultDeepWorkModeMinutes;
+  }
+
+  Future<bool> setDeepWorkModeMinutes(int minutes) async {
+    final mode = VoidDeepWorkMode.forMinutes(minutes);
+    if (mode == null) return false;
+
+    await initialize();
+    final prefs = await _requirePrefs();
+    if (prefs == null) return false;
+
+    try {
+      await prefs.setInt(_kDeepWorkModeMinutes, mode.minutes);
+    } catch (_) {
+      return false;
+    }
+
+    data = StatsData(
+      completedSessions: data.completedSessions,
+      totalFocusSeconds: data.totalFocusSeconds,
+      currentStreak: data.currentStreak,
+      bestStreak: data.bestStreak,
+      todaySessions: data.todaySessions,
+      distractions: data.distractions,
+      averageDistractionsPerSession: data.averageDistractionsPerSession,
+      preventedDistractionMinutes: data.preventedDistractionMinutes,
+      achievements: data.achievements,
+      sessionHistory: data.sessionHistory,
+      todayFocusSeconds: data.todayFocusSeconds,
+      dailyGoalMinutes: data.dailyGoalMinutes,
+      deepWorkModeMinutes: mode.minutes,
+      averageFocusScore: data.averageFocusScore,
+      last7Days: data.last7Days,
+      last30Days: data.last30Days,
+      personalRecords: data.personalRecords,
+      bonusXp: data.bonusXp,
+      weeklyGoals: data.weeklyGoals,
+      focusModeStats: data.focusModeStats,
+    );
+    notifyListeners();
+    return true;
   }
 
   static bool _readDailyGoalAchieved(SharedPreferences prefs) {
@@ -1036,16 +4580,16 @@ class StatsService extends ChangeNotifier {
   }
 
   static bool _activityContainsDailyGoal(
-    Map<String, int> activity,
+    Map<String, VoidDayActivity> activity,
     int goalMinutes,
   ) {
     final threshold = goalMinutes * 60;
-    return activity.values.any((seconds) => seconds >= threshold);
+    return activity.values.any((day) => day.focusSeconds >= threshold);
   }
 
   Future<void> _syncDailyGoalAchieved(
     SharedPreferences prefs,
-    Map<String, int> activity,
+    Map<String, VoidDayActivity> activity,
     int goalMinutes,
   ) async {
     if (_readDailyGoalAchieved(prefs)) return;
@@ -1068,7 +4612,7 @@ class StatsService extends ChangeNotifier {
 
       await _migrateToSecondsIfNeeded(prefs);
 
-      final activity = _parseActivity(prefs.getString(_kDailyActivity));
+      final activity = parseDailyActivityMap(prefs.getString(_kDailyActivity));
       final completedSessions = _readCompletedSessions(prefs);
       final totalFocusSeconds = _readTotalFocusSeconds(prefs);
       final streak = await _syncStreakFromActivity(prefs, activity);
@@ -1086,6 +4630,7 @@ class StatsService extends ChangeNotifier {
       final preventedDistractionMinutes =
           prefs.getInt(_kPreventedDistractionMinutes) ?? 0;
       final dailyGoalMinutes = _readDailyGoalMinutes(prefs);
+      final deepWorkModeMinutes = _readDeepWorkModeMinutes(prefs);
       await _syncDailyGoalAchieved(prefs, activity, dailyGoalMinutes);
       final dailyGoalAchieved = _readDailyGoalAchieved(prefs);
       final achievements = buildAchievements(
@@ -1101,6 +4646,34 @@ class StatsService extends ChangeNotifier {
         history: sessionHistory,
         distractionsHistory: sessionDistractionsHistory,
       );
+      final personalRecords = buildPersonalRecords(
+        sessionHistory: sessionHistory,
+        activity: activity,
+        bestStreak: bestStreak,
+      );
+      await _syncWeeklyGoalRewards(prefs, sessionHistory, activity);
+      final bonusXp = _readBonusXp(prefs);
+      final weeklyGoals = buildWeeklyGoalsData(
+        sessionHistory: sessionHistory,
+        activity: activity,
+        claimedIds: _readWeeklyGoalsClaimed(prefs),
+        weeklySessionsCount: _readWeeklySessionsCount(prefs),
+      );
+      final focusModeStats = _readFocusModeStats(prefs, sessionHistory);
+      final storedFocusModeStats = prefs.getString(_kFocusModeStats);
+      if ((storedFocusModeStats == null || storedFocusModeStats.isEmpty) &&
+          sessionHistory.isNotEmpty) {
+        await prefs.setString(
+          _kFocusModeStats,
+          jsonEncode({
+            for (final entry in focusModeStats.entries)
+              '${entry.minutes}': {
+                'sessions': entry.sessions,
+                'focusSeconds': entry.focusSeconds,
+              },
+          }),
+        );
+      }
 
       data = StatsData(
         completedSessions: completedSessions,
@@ -1115,11 +4688,19 @@ class StatsService extends ChangeNotifier {
         sessionHistory: sessionHistory,
         todayFocusSeconds: todayFocusSeconds,
         dailyGoalMinutes: dailyGoalMinutes,
+        deepWorkModeMinutes: deepWorkModeMinutes,
         averageFocusScore: averageFocusScore,
         last7Days: _buildLast7Days(activity, sessionHistory),
         last30Days: _buildLast30Days(activity, sessionHistory),
+        personalRecords: personalRecords,
+        bonusXp: bonusXp,
+        weeklyGoals: weeklyGoals,
+        focusModeStats: focusModeStats,
       );
 
+      unawaited(
+        VoidNotificationService.instance.rescheduleFromStats(data),
+      );
     } finally {
       isLoading = false;
       notifyListeners();
@@ -1129,6 +4710,9 @@ class StatsService extends ChangeNotifier {
   Future<bool> completeSession({
     required int focusSeconds,
     int sessionDistractions = 0,
+    String? taskId,
+    String? taskTitle,
+    int? focusModeMinutes,
   }) async {
     await initialize();
     final prefs = await _requirePrefs();
@@ -1140,15 +4724,20 @@ class StatsService extends ChangeNotifier {
       await _migrateToSecondsIfNeeded(prefs);
 
       final today = _dateKey(DateTime.now());
-      final yesterday =
-          _dateKey(DateTime.now().subtract(const Duration(days: 1)));
 
       final completedSessions = _readCompletedSessions(prefs) + 1;
       final totalFocusSeconds =
           _readTotalFocusSeconds(prefs) + focusSeconds;
 
-      final activity = _parseActivity(prefs.getString(_kDailyActivity));
-      activity[today] = (activity[today] ?? 0) + focusSeconds;
+      final activity = parseDailyActivityMap(prefs.getString(_kDailyActivity));
+      activity[today] = mergeDailyActivity(
+        dayKey: today,
+        existing: activity[today],
+        addedFocusSeconds: focusSeconds,
+        addedDistractions: sessionDistractions,
+        addedFocusScore: computeFocusScore(sessionDistractions),
+        addedXp: computeSessionXp(focusSeconds, sessionDistractions),
+      );
 
       final todaySessions = _readTodaySessions(prefs) + 1;
       final totalDistractions =
@@ -1160,7 +4749,10 @@ class StatsService extends ChangeNotifier {
 
       await prefs.setInt(_kCompletedSessions, completedSessions);
       await prefs.setInt(_kTotalFocusSeconds, totalFocusSeconds);
-      await prefs.setString(_kDailyActivity, jsonEncode(activity));
+      await prefs.setString(
+        _kDailyActivity,
+        encodeDailyActivityMap(activity),
+      );
       await _syncStreakFromActivity(prefs, activity);
       await prefs.setString(_kTodaySessionsDate, today);
       await prefs.setInt(_kTodaySessions, todaySessions);
@@ -1182,12 +4774,48 @@ class StatsService extends ChangeNotifier {
         await prefs.setInt(_kPreventedDistractionMinutes, preventedMinutes);
       }
 
+      final resolvedFocusModeMinutes = VoidDeepWorkMode.resolve(
+        focusModeMinutes ?? _readDeepWorkModeMinutes(prefs),
+      ).minutes;
+
+      await _incrementFocusModeStats(
+        prefs,
+        resolvedFocusModeMinutes,
+        focusSeconds,
+      );
+
       await _syncSessionHistory(prefs);
 
+      final history = _readSessionHistoryRaw(prefs);
+      history.sort((a, b) => b.completedAt.compareTo(a.completedAt));
+      if (history.isNotEmpty) {
+        history[0] = history.first.copyWith(
+          taskId: taskId ?? history.first.taskId,
+          taskTitle: taskTitle ?? history.first.taskTitle,
+          focusModeMinutes: resolvedFocusModeMinutes,
+        );
+        await prefs.setString(
+          _kSessionHistory,
+          jsonEncode(history.map((record) => record.toJson()).toList()),
+        );
+      }
+
+      if (taskId != null && focusSeconds > 0) {
+        await TasksService.instance.recordTaskSession(
+          taskId,
+          focusSeconds,
+          focusScore: computeFocusScore(sessionDistractions),
+        );
+      }
+
       final dailyGoalMinutes = _readDailyGoalMinutes(prefs);
-      if ((activity[today] ?? 0) >= dailyGoalMinutes * 60) {
+      if ((activity[today]?.focusSeconds ?? 0) >= dailyGoalMinutes * 60) {
         await prefs.setBool(_kDailyGoalAchieved, true);
       }
+
+      await _incrementWeeklySessionsCount(prefs);
+      final sessionHistory = _readSessionHistory(prefs);
+      await _syncWeeklyGoalRewards(prefs, sessionHistory, activity);
     } catch (_) {
       return false;
     }
@@ -1195,6 +4823,23 @@ class StatsService extends ChangeNotifier {
     _loadFuture = null;
     await _loadInternal();
     return true;
+  }
+
+  Future<bool> shouldPromptFirstLaunchFeedback() async {
+    await initialize();
+    final prefs = await _requirePrefs();
+    if (prefs == null) return false;
+    return shouldShowFirstLaunchFeedback(
+      completedSessions: _readCompletedSessions(prefs),
+      alreadyShown: prefs.getBool(_kFirstLaunchFeedbackShown) ?? false,
+    );
+  }
+
+  Future<void> markFirstLaunchFeedbackShown() async {
+    await initialize();
+    final prefs = await _requirePrefs();
+    if (prefs == null) return;
+    await prefs.setBool(_kFirstLaunchFeedbackShown, true);
   }
 
   Future<bool> resetAllStats() async {
@@ -1220,6 +4865,15 @@ class StatsService extends ChangeNotifier {
       await prefs.setString(_kSessionFocusSecondsHistory, jsonEncode([]));
       await prefs.setBool(_kSessionHistoryManuallyCleared, false);
       await prefs.setBool(_kDailyGoalAchieved, false);
+      await prefs.setBool(_kFirstLaunchFeedbackShown, false);
+      await prefs.setInt(_kBonusXp, 0);
+      await prefs.remove(_kWeeklyGoalsWeekKey);
+      await prefs.remove(_kWeeklyGoalsClaimed);
+      await prefs.remove(_kWeeklySessionsCount);
+      await prefs.setString(
+        _kFocusModeStats,
+        jsonEncode(emptyFocusModeStatsMap()),
+      );
     } catch (_) {
       return false;
     }
@@ -1250,61 +4904,645 @@ class StatsService extends ChangeNotifier {
     return true;
   }
 
-  Future<String> exportData() async {
+  Future<Map<String, dynamic>> buildBackupPayload() async {
     await load();
-    final stats = data;
-    final export = {
-      'exportedAt': DateTime.now().toIso8601String(),
-      'appVersion': kVoidAppVersion,
-      'completedSessions': stats.completedSessions,
-      'totalFocusSeconds': stats.totalFocusSeconds,
-      'currentStreak': stats.currentStreak,
-      'bestStreak': stats.bestStreak,
-      'todaySessions': stats.todaySessions,
-      'totalDistractions': stats.distractions,
-      'averageDistractionsPerSession': stats.averageDistractionsPerSession,
-      'preventedDistractionMinutes': stats.preventedDistractionMinutes,
-      'todayFocusSeconds': stats.todayFocusSeconds,
-      'dailyGoalMinutes': stats.dailyGoalMinutes,
-      'averageFocusScore': stats.averageFocusScore,
-      'totalXp': stats.totalXp,
-      'level': stats.level,
-      'xpInCurrentLevel': stats.xpInCurrentLevel,
-      'unlockedAchievementsCount': stats.unlockedAchievementsCount,
-      'last7Days': stats.last7Days
-          .map(
-            (day) => {
-              'date': _dateKey(day.date),
-              'focusSeconds': day.focusSeconds,
-            },
-          )
-          .toList(),
-      'last30Days': stats.last30Days
-          .map(
-            (day) => {
-              'date': _dateKey(day.date),
-              'focusSeconds': day.focusSeconds,
-              'status': resolveFocusDayStatus(
-                focusSeconds: day.focusSeconds,
-                goalMinutes: stats.dailyGoalMinutes,
-              ).name,
-            },
-          )
-          .toList(),
-      'sessionHistory':
-          stats.sessionHistory.map((session) => session.toJson()).toList(),
-      'achievements': stats.achievements
-          .map(
-            (achievement) => {
-              'id': achievement.id,
-              'title': achievement.title,
-              'isUnlocked': achievement.isUnlocked,
-            },
-          )
-          .toList(),
-    };
-    return const JsonEncoder.withIndent('  ').convert(export);
+    await TasksService.instance.load();
+    final prefs = await _requirePrefs();
+    if (prefs == null) {
+      return buildVoidBackupPayload(
+        stats: data,
+        dailyActivity: const {},
+        todaySessionsDate: null,
+        weeklySessionsCount: 0,
+        weeklyGoalsWeekKey: null,
+        weeklyGoalsClaimed: const {},
+        dailyGoalAchieved: false,
+        projects: TasksService.instance.projects,
+        tasks: TasksService.instance.tasks,
+      );
+    }
+
+    return buildVoidBackupPayload(
+      stats: data,
+      dailyActivity: parseDailyActivityMap(prefs.getString(_kDailyActivity)),
+      todaySessionsDate: prefs.getString(_kTodaySessionsDate),
+      weeklySessionsCount: prefs.getInt(_kWeeklySessionsCount) ?? 0,
+      weeklyGoalsWeekKey: prefs.getString(_kWeeklyGoalsWeekKey),
+      weeklyGoalsClaimed: _readWeeklyGoalsClaimed(prefs),
+      dailyGoalAchieved: _readDailyGoalAchieved(prefs),
+      projects: TasksService.instance.projects,
+      tasks: TasksService.instance.tasks,
+    );
   }
+
+  Future<String> exportBackup() async {
+    final payload = await buildBackupPayload();
+    return const JsonEncoder.withIndent('  ').convert(payload);
+  }
+
+  Future<String> exportData() async => exportBackup();
+
+  Future<VoidBackupImportResult> importBackup(String raw) async {
+    final parsed = parseVoidBackupJson(raw);
+    if (parsed == null) {
+      return const VoidBackupImportResult(
+        success: false,
+        error: 'Некорректный JSON',
+      );
+    }
+
+    final backup = normalizeVoidBackup(parsed);
+    final statistics = backup['statistics'];
+    if (statistics is! Map) {
+      return const VoidBackupImportResult(
+        success: false,
+        error: 'Отсутствует раздел statistics',
+      );
+    }
+
+    final statsMap = statistics.map(
+      (key, value) => MapEntry(key.toString(), value),
+    );
+    final sessions = parseVoidBackupSessions(backup['sessions']);
+    final projects = parseVoidBackupProjects(backup['projects']);
+    final tasks = parseVoidBackupTasks(backup['tasks']);
+
+    await initialize();
+    final prefs = await _requirePrefs();
+    if (prefs == null) {
+      return const VoidBackupImportResult(
+        success: false,
+        error: 'Хранилище недоступно',
+      );
+    }
+
+    try {
+      final completedSessions =
+          statsMap['completedSessions'] as int? ?? sessions.length;
+      final totalFocusSeconds = statsMap['totalFocusSeconds'] as int? ?? 0;
+      final currentStreak = statsMap['currentStreak'] as int? ?? 0;
+      final bestStreak = statsMap['bestStreak'] as int? ?? 0;
+      final todaySessions = statsMap['todaySessions'] as int? ?? 0;
+      final todaySessionsDate = statsMap['todaySessionsDate'] as String?;
+      final totalDistractions = statsMap['totalDistractions'] as int? ?? 0;
+      final preventedDistractionMinutes =
+          statsMap['preventedDistractionMinutes'] as int? ?? 0;
+      final dailyGoalMinutes =
+          statsMap['dailyGoalMinutes'] as int? ?? _kDefaultDailyGoalMinutes;
+      final deepWorkModeMinutes = VoidDeepWorkMode.forMinutes(
+            statsMap['deepWorkModeMinutes'] as int? ??
+                _kDefaultDeepWorkModeMinutes,
+          )?.minutes ??
+          _kDefaultDeepWorkModeMinutes;
+      final dailyGoalAchieved = statsMap['dailyGoalAchieved'] as bool? ?? false;
+      final bonusXp = statsMap['bonusXp'] as int? ?? 0;
+      final weeklyGoalsWeekKey = statsMap['weeklyGoalsWeekKey'] as String?;
+      final weeklySessionsCount =
+          statsMap['weeklySessionsCount'] as int? ?? 0;
+      final weeklyGoalsClaimedRaw = statsMap['weeklyGoalsClaimed'];
+      final weeklyGoalsClaimed = weeklyGoalsClaimedRaw is List
+          ? weeklyGoalsClaimedRaw.map((entry) => entry.toString()).toList()
+          : <String>[];
+
+      var dailyActivity = <String, VoidDayActivity>{};
+      final dailyActivityRaw = statsMap['dailyActivity'];
+      if (dailyActivityRaw is Map) {
+        dailyActivity = parseDailyActivityFromDynamicMap(dailyActivityRaw);
+      }
+      if (dailyActivity.isEmpty && sessions.isNotEmpty) {
+        dailyActivity = aggregateDayActivityFromSessions(sessions);
+      }
+
+      final orderedSessions = [...sessions]
+        ..sort((a, b) => a.completedAt.compareTo(b.completedAt));
+      final distractionsHistory =
+          orderedSessions.map((session) => session.distractions).toList();
+      final focusSecondsHistory =
+          orderedSessions.map((session) => session.focusSeconds).toList();
+      final sessionHistoryNewestFirst = [...sessions]
+        ..sort((a, b) => b.completedAt.compareTo(a.completedAt));
+
+      await prefs.setInt(_kCompletedSessions, completedSessions);
+      await prefs.setInt(_kTotalFocusSeconds, totalFocusSeconds);
+      await prefs.setInt(_kCurrentStreak, currentStreak);
+      await prefs.setInt(_kBestStreak, bestStreak);
+      await prefs.setString(
+        _kDailyActivity,
+        encodeDailyActivityMap(dailyActivity),
+      );
+      if (todaySessionsDate != null && todaySessionsDate.isNotEmpty) {
+        await prefs.setString(_kTodaySessionsDate, todaySessionsDate);
+      } else {
+        await prefs.remove(_kTodaySessionsDate);
+      }
+      await prefs.setInt(_kTodaySessions, todaySessions);
+      await prefs.setInt(_kTotalDistractions, totalDistractions);
+      await prefs.setString(
+        _kSessionDistractionsHistory,
+        jsonEncode(distractionsHistory),
+      );
+      await prefs.setString(
+        _kSessionFocusSecondsHistory,
+        jsonEncode(focusSecondsHistory),
+      );
+      await prefs.setString(
+        _kSessionHistory,
+        jsonEncode(
+          sessionHistoryNewestFirst.map((session) => session.toJson()).toList(),
+        ),
+      );
+      await prefs.setBool(
+        _kSessionHistoryManuallyCleared,
+        sessionHistoryNewestFirst.isEmpty && completedSessions > 0,
+      );
+      await prefs.setInt(
+        _kPreventedDistractionMinutes,
+        preventedDistractionMinutes,
+      );
+      await prefs.setInt(_kDailyGoalMinutes, dailyGoalMinutes);
+      await prefs.setInt(_kDeepWorkModeMinutes, deepWorkModeMinutes);
+      await prefs.setBool(_kDailyGoalAchieved, dailyGoalAchieved);
+      await prefs.setInt(_kBonusXp, bonusXp);
+      if (weeklyGoalsWeekKey != null && weeklyGoalsWeekKey.isNotEmpty) {
+        await prefs.setString(_kWeeklyGoalsWeekKey, weeklyGoalsWeekKey);
+      } else {
+        await prefs.remove(_kWeeklyGoalsWeekKey);
+      }
+      await prefs.setString(
+        _kWeeklyGoalsClaimed,
+        jsonEncode(weeklyGoalsClaimed),
+      );
+      await prefs.setInt(_kWeeklySessionsCount, weeklySessionsCount);
+      await prefs.setBool(_kFocusDataUsesSeconds, true);
+
+      final focusModeStatsRaw = statsMap['focusModeStats'];
+      if (focusModeStatsRaw is Map) {
+        await prefs.setString(
+          _kFocusModeStats,
+          jsonEncode(
+            focusModeStatsRaw.map(
+              (key, value) => MapEntry(key.toString(), value),
+            ),
+          ),
+        );
+      } else {
+        final rebuilt = buildFocusModeStatsFromSessions(
+          sessionHistoryNewestFirst,
+        );
+        await prefs.setString(
+          _kFocusModeStats,
+          jsonEncode({
+            for (final entry in rebuilt.entries)
+              '${entry.minutes}': {
+                'sessions': entry.sessions,
+                'focusSeconds': entry.focusSeconds,
+              },
+          }),
+        );
+      }
+
+      final tasksRestored =
+          await TasksService.instance.restoreFromBackup(
+        projects: projects,
+        tasks: tasks,
+      );
+      if (!tasksRestored) {
+        return const VoidBackupImportResult(
+          success: false,
+          error: 'Не удалось восстановить задачи и проекты',
+        );
+      }
+    } catch (_) {
+      return const VoidBackupImportResult(
+        success: false,
+        error: 'Ошибка при восстановлении данных',
+      );
+    }
+
+    _loadFuture = null;
+    await _loadInternal();
+    await TasksService.instance.load(force: true);
+    return VoidBackupImportResult(
+      success: true,
+      sessionsCount: sessions.length,
+      projectsCount: projects.length,
+      tasksCount: tasks.length,
+    );
+  }
+}
+
+class TasksService extends ChangeNotifier {
+  TasksService._();
+
+  static final TasksService instance = TasksService._();
+
+  List<VoidProject> projects = [];
+  List<VoidTask> tasks = [];
+  VoidTaskSelection? activeTaskSelection;
+  bool isLoading = false;
+  SharedPreferences? _prefs;
+  Future<void>? _initFuture;
+
+  Future<void> initialize({bool force = false}) async {
+    if (force) {
+      _prefs = null;
+      _initFuture = null;
+    }
+    if (_prefs != null) return;
+    _initFuture ??= _initializePrefs();
+    await _initFuture;
+  }
+
+  Future<void> _initializePrefs() async {
+    try {
+      _prefs = await SharedPreferences.getInstance();
+    } catch (_) {
+      _prefs = null;
+      _initFuture = null;
+    }
+  }
+
+  Future<SharedPreferences?> _requirePrefs() async {
+    try {
+      await initialize();
+      return _prefs;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static List<VoidProject> _readProjectsRaw(SharedPreferences prefs) {
+    final raw = prefs.getString(_kVoidProjects);
+    if (raw == null || raw.isEmpty) return [];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return [];
+      return decoded
+          .whereType<Map>()
+          .map(
+            (entry) => VoidProject.fromJson(
+              entry.map((key, value) => MapEntry(key.toString(), value)),
+            ),
+          )
+          .toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static List<VoidTask> _readTasksRaw(SharedPreferences prefs) {
+    final raw = prefs.getString(_kVoidTasks);
+    if (raw == null || raw.isEmpty) return [];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return [];
+      return decoded
+          .whereType<Map>()
+          .map(
+            (entry) => VoidTask.fromJson(
+              entry.map((key, value) => MapEntry(key.toString(), value)),
+            ),
+          )
+          .toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> load({bool force = false}) async {
+    if (isLoading && !force) return;
+    isLoading = true;
+    notifyListeners();
+    try {
+      final prefs = await _requirePrefs();
+      if (prefs == null) {
+        projects = [];
+        tasks = [];
+        return;
+      }
+      final loadedProjects = _readProjectsRaw(prefs);
+      loadedProjects.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      projects = loadedProjects;
+
+      final loadedTasks = _readTasksRaw(prefs);
+      loadedTasks.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      tasks = loadedTasks;
+      _loadActiveTaskSelection(prefs);
+      _validateActiveTaskSelection();
+    } finally {
+      isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  void _loadActiveTaskSelection(SharedPreferences prefs) {
+    final taskId = prefs.getString(_kActiveTaskId);
+    final taskTitle = prefs.getString(_kActiveTaskTitle);
+    if (taskId != null &&
+        taskTitle != null &&
+        taskTitle.isNotEmpty) {
+      activeTaskSelection =
+          VoidTaskSelection(taskId: taskId, taskTitle: taskTitle);
+    } else {
+      activeTaskSelection = null;
+    }
+  }
+
+  void _validateActiveTaskSelection() {
+    final selection = activeTaskSelection;
+    if (selection == null || !selection.hasTask) return;
+    final task = taskById(selection.taskId);
+    if (task == null || task.isCompleted) {
+      activeTaskSelection = null;
+    }
+  }
+
+  Future<bool> setActiveTask(VoidTaskSelection? selection) async {
+    await load();
+    final prefs = await _requirePrefs();
+    if (prefs == null) return false;
+
+    try {
+      if (selection != null && selection.hasTask) {
+        await prefs.setString(_kActiveTaskId, selection.taskId!);
+        await prefs.setString(_kActiveTaskTitle, selection.taskTitle!);
+        activeTaskSelection = selection;
+      } else {
+        await prefs.remove(_kActiveTaskId);
+        await prefs.remove(_kActiveTaskTitle);
+        activeTaskSelection = null;
+      }
+      notifyListeners();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> scheduleLoad({bool force = false}) async {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(load(force: force));
+    });
+  }
+
+  Future<bool> _saveProjects(List<VoidProject> updated) async {
+    final prefs = await _requirePrefs();
+    if (prefs == null) return false;
+    try {
+      await prefs.setString(
+        _kVoidProjects,
+        jsonEncode(updated.map((project) => project.toJson()).toList()),
+      );
+      updated.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      projects = updated;
+      notifyListeners();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> _saveTasks(List<VoidTask> updated) async {
+    final prefs = await _requirePrefs();
+    if (prefs == null) return false;
+    try {
+      await prefs.setString(
+        _kVoidTasks,
+        jsonEncode(updated.map((task) => task.toJson()).toList()),
+      );
+      updated.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      tasks = updated;
+      notifyListeners();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> restoreFromBackup({
+    required List<VoidProject> projects,
+    required List<VoidTask> tasks,
+  }) async {
+    final prefs = await _requirePrefs();
+    if (prefs == null) return false;
+
+    final sortedProjects = [...projects]
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    final sortedTasks = [...tasks]
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+    try {
+      await prefs.setString(
+        _kVoidProjects,
+        jsonEncode(sortedProjects.map((project) => project.toJson()).toList()),
+      );
+      await prefs.setString(
+        _kVoidTasks,
+        jsonEncode(sortedTasks.map((task) => task.toJson()).toList()),
+      );
+      this.projects = sortedProjects;
+      this.tasks = sortedTasks;
+      notifyListeners();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<VoidProject?> addProject(VoidProjectEditorResult draft) async {
+    final trimmed = draft.title.trim();
+    if (trimmed.isEmpty) return null;
+    await load();
+    final project = VoidProject(
+      id: generateVoidTaskId(),
+      title: trimmed,
+      createdAt: DateTime.now(),
+      colorValue: draft.colorValue,
+      iconName: draft.iconName,
+    );
+    final updated = [...projects, project];
+    final saved = await _saveProjects(updated);
+    return saved ? project : null;
+  }
+
+  Future<bool> updateProject(VoidProject project) async {
+    final trimmed = project.title.trim();
+    if (trimmed.isEmpty) return false;
+    await load();
+    final index = projects.indexWhere((entry) => entry.id == project.id);
+    if (index < 0) return false;
+    final updated = [...projects];
+    updated[index] = project.copyWith(title: trimmed);
+    return _saveProjects(updated);
+  }
+
+  Future<bool> deleteProject(String id) async {
+    await load();
+    final updatedProjects =
+        projects.where((project) => project.id != id).toList();
+    if (updatedProjects.length == projects.length) return false;
+
+    final updatedTasks = tasks
+        .map(
+          (task) => task.projectId == id
+              ? task.copyWith(clearProjectId: true)
+              : task,
+        )
+        .toList();
+
+    final projectsSaved = await _saveProjects(updatedProjects);
+    if (!projectsSaved) return false;
+    return _saveTasks(updatedTasks);
+  }
+
+  Future<VoidTask?> addTask(
+    String title, {
+    String? projectId,
+    String description = '',
+    bool isCompleted = false,
+    int estimatedSessions = kDefaultTaskEstimatedSessions,
+  }) async {
+    final trimmed = title.trim();
+    if (trimmed.isEmpty) return null;
+    await load();
+    if (projectId != null && projectById(projectId) == null) return null;
+    final task = VoidTask(
+      id: generateVoidTaskId(),
+      title: trimmed,
+      description: description.trim(),
+      isCompleted: isCompleted,
+      estimatedSessions: estimatedSessions.clamp(1, 99),
+      totalFocusSeconds: 0,
+      completedSessions: 0,
+      focusScoreSum: 0,
+      bestFocusScore: 0,
+      createdAt: DateTime.now(),
+      projectId: projectId,
+    );
+    final updated = [...tasks, task];
+    final saved = await _saveTasks(updated);
+    return saved ? task : null;
+  }
+
+  Future<bool> updateTask(VoidTask task) async {
+    final trimmed = task.title.trim();
+    if (trimmed.isEmpty) return false;
+    await load();
+    if (task.projectId != null && projectById(task.projectId) == null) {
+      return false;
+    }
+    final index = tasks.indexWhere((entry) => entry.id == task.id);
+    if (index < 0) return false;
+    final updated = [...tasks];
+    updated[index] = task.copyWith(title: trimmed);
+    return _saveTasks(updated);
+  }
+
+  Future<bool> deleteTask(String id) async {
+    await load();
+    final updated = tasks.where((task) => task.id != id).toList();
+    if (updated.length == tasks.length) return false;
+    final saved = await _saveTasks(updated);
+    if (saved && activeTaskSelection?.taskId == id) {
+      await setActiveTask(null);
+    }
+    return saved;
+  }
+
+  Future<bool> toggleTaskCompleted(String id) async {
+    await load();
+    final index = tasks.indexWhere((task) => task.id == id);
+    if (index < 0) return false;
+    final updated = [...tasks];
+    final task = updated[index];
+    updated[index] = task.copyWith(isCompleted: !task.isCompleted);
+    final saved = await _saveTasks(updated);
+    if (saved && activeTaskSelection?.taskId == id && updated[index].isCompleted) {
+      await setActiveTask(VoidTaskSelection.withoutTask);
+    }
+    return saved;
+  }
+
+  Future<bool> recordTaskSession(
+    String taskId,
+    int seconds, {
+    int focusScore = 0,
+  }) async {
+    if (seconds <= 0) return false;
+    await load();
+    final index = tasks.indexWhere((task) => task.id == taskId);
+    if (index < 0) return false;
+    final updated = [...tasks];
+    final task = updated[index];
+    updated[index] = task.copyWith(
+      totalFocusSeconds: task.totalFocusSeconds + seconds,
+      completedSessions: task.completedSessions + 1,
+      focusScoreSum: task.focusScoreSum + focusScore,
+      bestFocusScore: focusScore > task.bestFocusScore
+          ? focusScore
+          : task.bestFocusScore,
+    );
+    return _saveTasks(updated);
+  }
+
+  Future<bool> addFocusSeconds(String taskId, int seconds) async =>
+      recordTaskSession(taskId, seconds);
+
+  VoidProject? projectById(String? id) {
+    if (id == null) return null;
+    for (final project in projects) {
+      if (project.id == id) return project;
+    }
+    return null;
+  }
+
+  VoidTask? taskById(String? id) {
+    if (id == null) return null;
+    for (final task in tasks) {
+      if (task.id == id) return task;
+    }
+    return null;
+  }
+
+  int projectFocusSeconds(String projectId) {
+    return tasks
+        .where((task) => task.projectId == projectId)
+        .fold<int>(0, (sum, task) => sum + task.totalFocusSeconds);
+  }
+
+  int projectSessionsCount(String projectId) {
+    return tasks
+        .where((task) => task.projectId == projectId)
+        .fold<int>(0, (sum, task) => sum + task.completedSessions);
+  }
+
+  bool isProjectCompleted(VoidProject project) {
+    final projectTasks =
+        tasks.where((task) => task.projectId == project.id).toList();
+    if (projectTasks.isEmpty) return false;
+    return projectTasks.every((task) => task.isCompleted);
+  }
+
+  List<VoidTask> get completedTasks =>
+      tasks.where((task) => task.isCompleted).toList();
+
+  List<VoidProject> get completedProjects =>
+      projects.where(isProjectCompleted).toList();
+
+  List<VoidTask> tasksForProject(String? projectId, {bool activeOnly = false}) {
+    return tasks.where((task) {
+      final matchesProject = task.projectId == projectId;
+      if (!matchesProject) return false;
+      return activeOnly ? !task.isCompleted : true;
+    }).toList();
+  }
+
+  List<VoidTask> get activeTasks =>
+      tasks.where((task) => !task.isCompleted).toList();
+
+  int get activeTaskCount => activeTasks.length;
+
+  int get projectCount => projects.length;
 }
 
 class VoidMetrics {
@@ -1313,6 +5551,7 @@ class VoidMetrics {
     required this.gapS,
     required this.gapM,
     required this.gapL,
+    required this.gapXL,
     required this.buttonHeight,
     required this.buttonRadius,
     required this.logoSize,
@@ -1333,6 +5572,7 @@ class VoidMetrics {
   final double gapS;
   final double gapM;
   final double gapL;
+  final double gapXL;
   final double buttonHeight;
   final double buttonRadius;
   final double logoSize;
@@ -1361,6 +5601,7 @@ class VoidMetrics {
       gapS: compact ? 12 : 16,
       gapM: compact ? 16 : 20,
       gapL: compact ? 20 : 28,
+      gapXL: compact ? 28 : 36,
       buttonHeight: (46 * scale).clamp(44, 50),
       buttonRadius: 12,
       logoSize: (60 * scale).clamp(52, 68),
@@ -1382,6 +5623,8 @@ class VoidMetrics {
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await StatsService.instance.initialize().catchError((_) {});
+  await TasksService.instance.initialize().catchError((_) {});
+  await VoidNotificationService.instance.initialize().catchError((_) {});
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
@@ -1583,14 +5826,42 @@ class VoidShell extends StatefulWidget {
   State<VoidShell> createState() => _VoidShellState();
 }
 
-class _VoidShellState extends State<VoidShell> {
+class _VoidShellState extends State<VoidShell> with WidgetsBindingObserver {
   late int _currentIndex;
+  VoidTaskSelection? _taskSelection;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _currentIndex = widget.initialIndex;
     StatsService.instance.scheduleLoad(force: true);
+    TasksService.instance.scheduleLoad(force: true);
+    unawaited(
+      TasksService.instance.load(force: true).then((_) {
+        if (!mounted) return;
+        setState(() {
+          _taskSelection = TasksService.instance.activeTaskSelection;
+        });
+      }),
+    );
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(
+        VoidNotificationService.instance.rescheduleFromStats(
+          StatsService.instance.data,
+        ),
+      );
+    }
   }
 
   void _onTabSelected(int index) {
@@ -1600,9 +5871,35 @@ class _VoidShellState extends State<VoidShell> {
     StatsService.instance.load(force: true);
   }
 
-  void _openFocusTab() {
+  Future<void> _openFocusTab() async {
+    final selection = await showVoidTaskPicker(context);
+    if (selection == null || !mounted) return;
+    await TasksService.instance.setActiveTask(selection);
+    if (!mounted) return;
     HapticFeedback.lightImpact();
-    setState(() => _currentIndex = 1);
+    setState(() {
+      _taskSelection = selection;
+      _currentIndex = 1;
+    });
+  }
+
+  Future<void> _quickStartFocus() async {
+    final selection =
+        _taskSelection ?? TasksService.instance.activeTaskSelection;
+    if (selection != null && selection.hasTask) {
+      HapticFeedback.lightImpact();
+      setState(() {
+        _taskSelection = selection;
+        _currentIndex = 1;
+      });
+      return;
+    }
+    await _openFocusTab();
+  }
+
+  void _onTaskSelectionChanged(VoidTaskSelection? selection) {
+    setState(() => _taskSelection = selection);
+    unawaited(TasksService.instance.setActiveTask(selection));
   }
 
   @override
@@ -1612,8 +5909,14 @@ class _VoidShellState extends State<VoidShell> {
       body: IndexedStack(
         index: _currentIndex,
         children: [
-          VoidHomeTab(onStartSession: _openFocusTab),
-          const VoidFocusTab(),
+          VoidHomeTab(
+            onStartSession: _openFocusTab,
+            onQuickStart: _quickStartFocus,
+          ),
+          VoidFocusTab(
+            initialTaskSelection: _taskSelection,
+            onTaskSelectionChanged: _onTaskSelectionChanged,
+          ),
           const VoidAnalyticsTab(),
           const VoidProfileTab(),
         ],
@@ -1709,10 +6012,367 @@ class VoidTabScaffold extends StatelessWidget {
   }
 }
 
-class VoidHomeTab extends StatefulWidget {
-  const VoidHomeTab({super.key, required this.onStartSession});
+class VoidHomeActiveTaskCard extends StatelessWidget {
+  const VoidHomeActiveTaskCard({
+    super.key,
+    required this.taskSelection,
+    required this.onChangeTask,
+    required this.onQuickStart,
+  });
 
-  final VoidCallback onStartSession;
+  final VoidTaskSelection? taskSelection;
+  final VoidCallback onChangeTask;
+  final VoidCallback onQuickStart;
+
+  @override
+  Widget build(BuildContext context) {
+    final m = VoidMetrics.of(context);
+    final hasTask = taskSelection?.hasTask ?? false;
+    final task = hasTask
+        ? TasksService.instance.taskById(taskSelection!.taskId)
+        : null;
+    final project = task?.projectId != null
+        ? TasksService.instance.projectById(task!.projectId)
+        : null;
+    final accent = project?.color ?? kVoidAccent;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: hasTask
+              ? accent.withValues(alpha: 0.35)
+              : kVoidAccent.withValues(alpha: 0.18),
+        ),
+        boxShadow: hasTask
+            ? [
+                BoxShadow(
+                  color: accent.withValues(alpha: 0.12),
+                  blurRadius: 18,
+                ),
+              ]
+            : null,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: hasTask
+                      ? accent.withValues(alpha: 0.16)
+                      : kVoidAccent.withValues(alpha: 0.12),
+                  border: Border.all(
+                    color: hasTask
+                        ? accent.withValues(alpha: 0.35)
+                        : kVoidAccent.withValues(alpha: 0.2),
+                  ),
+                ),
+                child: Center(
+                  child: hasTask && project != null
+                      ? Text(project.emoji, style: const TextStyle(fontSize: 22))
+                      : Icon(
+                          Icons.task_alt_rounded,
+                          size: 22,
+                          color: hasTask
+                              ? accent.withValues(alpha: 0.9)
+                              : Colors.white.withValues(alpha: 0.35),
+                        ),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Активная задача',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.white.withValues(alpha: 0.45),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      hasTask ? taskSelection!.taskTitle! : 'Задача не выбрана',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.white.withValues(alpha: 0.92),
+                      ),
+                    ),
+                    if (hasTask && project != null) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        '${project.emoji} ${project.title}',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: accent.withValues(alpha: 0.85),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              if (hasTask)
+                IconButton(
+                  onPressed: onChangeTask,
+                  visualDensity: VisualDensity.compact,
+                  icon: Icon(
+                    Icons.swap_horiz_rounded,
+                    color: kVoidAccent.withValues(alpha: 0.8),
+                  ),
+                ),
+            ],
+          ),
+          if (hasTask && task != null) ...[
+            const SizedBox(height: 14),
+            VoidTaskSessionProgressSection(
+              task: task,
+              accent: accent,
+            ),
+          ],
+          SizedBox(height: m.gapM),
+          SizedBox(
+            width: double.infinity,
+            height: m.buttonHeight,
+            child: FilledButton.icon(
+              onPressed: hasTask ? onQuickStart : onChangeTask,
+              style: FilledButton.styleFrom(
+                backgroundColor: kVoidAccent,
+                foregroundColor: Colors.white,
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(m.buttonRadius),
+                ),
+              ),
+              icon: Icon(
+                hasTask ? Icons.play_arrow_rounded : Icons.add_task_rounded,
+                size: 20,
+              ),
+              label: Text(
+                hasTask ? 'Быстрый старт' : 'Выбрать задачу',
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+}
+
+class VoidCompletedWorkCard extends StatelessWidget {
+  const VoidCompletedWorkCard({
+    super.key,
+    required this.completedTasks,
+    required this.completedProjects,
+  });
+
+  final List<VoidTask> completedTasks;
+  final List<VoidProject> completedProjects;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: kVoidAccent.withValues(alpha: 0.28)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Завершённая работа',
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.white.withValues(alpha: 0.45),
+            ),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            'Задачи · ${completedTasks.length}',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: Colors.white.withValues(alpha: 0.9),
+            ),
+          ),
+          const SizedBox(height: 8),
+          if (completedTasks.isEmpty)
+            Text(
+              'Пока нет завершённых задач',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.white.withValues(alpha: 0.4),
+              ),
+            )
+          else
+            ...completedTasks.take(3).map(
+              (task) => Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Text(
+                  '• ${task.title} · ${formatFocusDuration(task.totalFocusSeconds)}',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.white.withValues(alpha: 0.55),
+                  ),
+                ),
+              ),
+            ),
+          if (completedTasks.length > 3)
+            Text(
+              'и ещё ${completedTasks.length - 3}',
+              style: TextStyle(
+                fontSize: 11,
+                color: Colors.white.withValues(alpha: 0.35),
+              ),
+            ),
+          const SizedBox(height: 14),
+          Text(
+            'Проекты · ${completedProjects.length}',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: Colors.white.withValues(alpha: 0.9),
+            ),
+          ),
+          const SizedBox(height: 8),
+          if (completedProjects.isEmpty)
+            Text(
+              'Пока нет завершённых проектов',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.white.withValues(alpha: 0.4),
+              ),
+            )
+          else
+            ...completedProjects.take(3).map(
+              (project) => Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(
+                  children: [
+                    Text(
+                      project.emoji,
+                      style: const TextStyle(fontSize: 14),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '${project.title} · '
+                            '${formatFocusDuration(TasksService.instance.projectFocusSeconds(project.id))}',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.white.withValues(alpha: 0.55),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class VoidFocusBreakdownListCard extends StatelessWidget {
+  const VoidFocusBreakdownListCard({
+    super.key,
+    required this.title,
+    required this.entries,
+  });
+
+  final String title;
+  final List<VoidFocusBreakdownEntry> entries;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: kVoidAccent.withValues(alpha: 0.28)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.white.withValues(alpha: 0.45),
+            ),
+          ),
+          const SizedBox(height: 12),
+          if (entries.isEmpty)
+            Text(
+              '—',
+              style: TextStyle(
+                fontSize: 14,
+                color: Colors.white.withValues(alpha: 0.35),
+              ),
+            )
+          else
+            for (var index = 0; index < entries.length; index++) ...[
+              if (index > 0) const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      entries[index].title,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.white.withValues(alpha: 0.88),
+                      ),
+                    ),
+                  ),
+                  Text(
+                    '${formatFocusDuration(entries[index].focusSeconds)} · '
+                    '${entries[index].sessionsCount} с.',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: kVoidAccent.withValues(alpha: 0.8),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+        ],
+      ),
+    );
+  }
+}
+
+class VoidHomeTab extends StatefulWidget {
+  const VoidHomeTab({
+    super.key,
+    required this.onStartSession,
+    required this.onQuickStart,
+  });
+
+  final Future<void> Function() onStartSession;
+  final Future<void> Function() onQuickStart;
 
   @override
   State<VoidHomeTab> createState() => _VoidHomeTabState();
@@ -1723,6 +6383,7 @@ class _VoidHomeTabState extends State<VoidHomeTab> {
   void initState() {
     super.initState();
     StatsService.instance.scheduleLoad(force: true);
+    TasksService.instance.scheduleLoad(force: true);
   }
 
   @override
@@ -1735,9 +6396,13 @@ class _VoidHomeTabState extends State<VoidHomeTab> {
         child: Padding(
           padding: EdgeInsets.symmetric(horizontal: m.paddingH),
           child: ListenableBuilder(
-            listenable: StatsService.instance,
+            listenable: Listenable.merge([
+              StatsService.instance,
+              TasksService.instance,
+            ]),
             builder: (context, _) {
               final analytics = StatsService.instance.data;
+              final activeTask = TasksService.instance.activeTaskSelection;
 
               return Column(
                 children: [
@@ -1757,11 +6422,19 @@ class _VoidHomeTabState extends State<VoidHomeTab> {
                             ),
                           ),
                           SizedBox(height: m.gapL),
+                          VoidHomeActiveTaskCard(
+                            taskSelection: activeTask,
+                            onChangeTask: widget.onStartSession,
+                            onQuickStart: widget.onQuickStart,
+                          ),
+                          SizedBox(height: m.gapM),
                           VoidDailyGoalCard(
                             todayFocusSeconds: analytics.todayFocusSeconds,
                             goalMinutes: analytics.dailyGoalMinutes,
                             progress: analytics.dailyGoalProgress,
                           ),
+                          SizedBox(height: m.gapM),
+                          VoidWeeklyGoalsCard(goalsData: analytics.weeklyGoals),
                           SizedBox(height: m.gapM),
                           VoidStatCard(
                             label: 'Всего сессий',
@@ -1785,29 +6458,32 @@ class _VoidHomeTabState extends State<VoidHomeTab> {
                       ),
                     ),
                   ),
-                  SizedBox(
-                    width: double.infinity,
-                    height: m.buttonHeight,
-                    child: FilledButton(
-                      onPressed: widget.onStartSession,
-                      style: FilledButton.styleFrom(
-                        backgroundColor: kVoidAccent,
-                        foregroundColor: Colors.white,
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(m.buttonRadius),
+                  if (activeTask == null || !activeTask.hasTask) ...[
+                    SizedBox(
+                      width: double.infinity,
+                      height: m.buttonHeight,
+                      child: OutlinedButton(
+                        onPressed: widget.onStartSession,
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: kVoidAccent,
+                          side: BorderSide(
+                            color: kVoidAccent.withValues(alpha: 0.45),
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(m.buttonRadius),
+                          ),
                         ),
-                      ),
-                      child: const Text(
-                        'Начать сессию',
-                        style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
+                        child: const Text(
+                          'Начать сессию',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                  SizedBox(height: m.gapS),
+                    SizedBox(height: m.gapS),
+                  ],
                 ],
               );
             },
@@ -1830,6 +6506,7 @@ class _VoidAnalyticsTabState extends State<VoidAnalyticsTab> {
   void initState() {
     super.initState();
     StatsService.instance.scheduleLoad(force: true);
+    TasksService.instance.scheduleLoad(force: true);
   }
 
   @override
@@ -1840,7 +6517,10 @@ class _VoidAnalyticsTabState extends State<VoidAnalyticsTab> {
       glowCenter: const Alignment(0, -0.5),
       child: SafeArea(
         child: ListenableBuilder(
-          listenable: StatsService.instance,
+          listenable: Listenable.merge([
+            StatsService.instance,
+            TasksService.instance,
+          ]),
           builder: (context, _) {
             final store = StatsService.instance;
             final analytics = store.data;
@@ -1888,6 +6568,39 @@ class _VoidAnalyticsTabState extends State<VoidAnalyticsTab> {
                     VoidStreakCard(
                       currentStreak: analytics.currentStreak,
                       bestStreak: analytics.bestStreak,
+                    ),
+                    SizedBox(height: m.gapM),
+                    VoidWeeklyGoalsCard(goalsData: analytics.weeklyGoals),
+                    SizedBox(height: m.gapM),
+                    VoidFocusModeStatsCard(stats: analytics.focusModeStats),
+                    SizedBox(height: m.gapM),
+                    VoidWeeklyReviewAccessCard(
+                      reviewData: buildWeeklyReviewData(
+                        sessionHistory: analytics.sessionHistory,
+                      ),
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => const VoidWeeklyReviewScreen(),
+                          ),
+                        );
+                      },
+                    ),
+                    SizedBox(height: m.gapM),
+                    VoidProductivityInsightsAccessCard(
+                      insights: buildProductivityInsights(
+                        sessionHistory: analytics.sessionHistory,
+                        tasks: TasksService.instance.tasks,
+                        projects: TasksService.instance.projects,
+                      ),
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) =>
+                                const VoidProductivityInsightsScreen(),
+                          ),
+                        );
+                      },
                     ),
                     SizedBox(height: m.gapM),
                     VoidStatCard(
@@ -2737,6 +7450,7 @@ class _VoidProfileTabState extends State<VoidProfileTab> {
   void initState() {
     super.initState();
     StatsService.instance.scheduleLoad(force: true);
+    TasksService.instance.scheduleLoad(force: true);
   }
 
   @override
@@ -2749,7 +7463,10 @@ class _VoidProfileTabState extends State<VoidProfileTab> {
         child: Padding(
           padding: EdgeInsets.symmetric(horizontal: m.paddingH),
           child: ListenableBuilder(
-            listenable: StatsService.instance,
+            listenable: Listenable.merge([
+              StatsService.instance,
+              TasksService.instance,
+            ]),
             builder: (context, _) {
               final stats = StatsService.instance.data;
 
@@ -2796,9 +7513,20 @@ class _VoidProfileTabState extends State<VoidProfileTab> {
                         color: Colors.white.withValues(alpha: 0.45),
                       ),
                     ),
+                    const SizedBox(height: 6),
+                    Text(
+                      stats.levelTitle,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        letterSpacing: 0.2,
+                        color: kVoidAccent.withValues(alpha: 0.88),
+                      ),
+                    ),
                     SizedBox(height: m.gapL),
                     VoidLevelCard(
                       level: stats.level,
+                      levelTitle: stats.levelTitle,
                       totalXp: stats.totalXp,
                       xpInLevel: stats.xpInCurrentLevel,
                       progress: stats.levelProgress,
@@ -2818,6 +7546,8 @@ class _VoidProfileTabState extends State<VoidProfileTab> {
                       currentStreak: stats.currentStreak,
                       bestStreak: stats.bestStreak,
                     ),
+                    SizedBox(height: m.gapM),
+                    VoidPersonalRecordsCard(records: stats.personalRecords),
                     SizedBox(height: m.gapL),
                     VoidHistoryAccessCard(
                       sessionCount: stats.completedSessions,
@@ -2826,6 +7556,24 @@ class _VoidProfileTabState extends State<VoidProfileTab> {
                           context,
                           MaterialPageRoute<void>(
                             builder: (_) => const VoidSessionHistoryScreen(),
+                          ),
+                        );
+                      },
+                    ),
+                    SizedBox(height: m.gapM),
+                    VoidCompletedWorkCard(
+                      completedTasks: TasksService.instance.completedTasks,
+                      completedProjects: TasksService.instance.completedProjects,
+                    ),
+                    SizedBox(height: m.gapM),
+                    VoidProjectsTasksAccessCard(
+                      projectCount: TasksService.instance.projectCount,
+                      activeTaskCount: TasksService.instance.activeTaskCount,
+                      onTap: () {
+                        Navigator.push<void>(
+                          context,
+                          MaterialPageRoute<void>(
+                            builder: (_) => const VoidProjectsTasksScreen(),
                           ),
                         );
                       },
@@ -2959,6 +7707,995 @@ class VoidHistoryAccessCard extends StatelessWidget {
   }
 }
 
+class VoidProjectsTasksAccessCard extends StatelessWidget {
+  const VoidProjectsTasksAccessCard({
+    super.key,
+    required this.projectCount,
+    required this.activeTaskCount,
+    required this.onTap,
+  });
+
+  final int projectCount;
+  final int activeTaskCount;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final subtitle = projectCount == 0 && activeTaskCount == 0
+        ? 'Создайте проект и задачи для фокуса'
+        : '$projectCount ${_projectCountLabel(projectCount)} · '
+            '$activeTaskCount ${_taskCountLabel(activeTaskCount)}';
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Ink(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.04),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: kVoidAccent.withValues(alpha: 0.25)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: kVoidAccent.withValues(alpha: 0.16),
+                  border: Border.all(color: kVoidAccent.withValues(alpha: 0.35)),
+                ),
+                child: Icon(
+                  Icons.folder_special_rounded,
+                  size: 20,
+                  color: kVoidAccent.withValues(alpha: 0.9),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Проекты',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.white.withValues(alpha: 0.92),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.white.withValues(alpha: 0.45),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.chevron_right_rounded,
+                color: kVoidAccent.withValues(alpha: 0.75),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  static String _projectCountLabel(int count) {
+    final mod10 = count % 10;
+    final mod100 = count % 100;
+    if (mod100 >= 11 && mod100 <= 14) return 'проектов';
+    if (mod10 == 1) return 'проект';
+    if (mod10 >= 2 && mod10 <= 4) return 'проекта';
+    return 'проектов';
+  }
+
+  static String _taskCountLabel(int count) {
+    final mod10 = count % 10;
+    final mod100 = count % 100;
+    if (mod100 >= 11 && mod100 <= 14) return 'активных задач';
+    if (mod10 == 1) return 'активная задача';
+    if (mod10 >= 2 && mod10 <= 4) return 'активные задачи';
+    return 'активных задач';
+  }
+}
+
+class VoidProjectsTasksScreen extends StatefulWidget {
+  const VoidProjectsTasksScreen({super.key});
+
+  @override
+  State<VoidProjectsTasksScreen> createState() =>
+      _VoidProjectsTasksScreenState();
+}
+
+class _VoidProjectsTasksScreenState extends State<VoidProjectsTasksScreen> {
+  @override
+  void initState() {
+    super.initState();
+    TasksService.instance.scheduleLoad(force: true);
+  }
+
+  Future<void> _addProject() async {
+    final draft = await showVoidProjectEditorDialog(context);
+    if (draft == null || !mounted) return;
+    final created = await TasksService.instance.addProject(draft);
+    if (!mounted) return;
+    if (created == null) {
+      showVoidSnackBar(context, 'Не удалось создать проект');
+    }
+  }
+
+  void _openProject(VoidProject project) {
+    Navigator.push(
+      context,
+      MaterialPageRoute<void>(
+        builder: (context) => VoidProjectDetailScreen(projectId: project.id),
+      ),
+    );
+  }
+
+  Future<void> _addTask({String? projectId}) async {
+    final draft = await showVoidTaskEditorDialog(
+      context,
+      initialProjectId: projectId,
+    );
+    if (draft == null || !mounted) return;
+    final created = await TasksService.instance.addTask(
+      draft.title,
+      projectId: draft.projectId,
+      description: draft.description,
+      isCompleted: draft.isCompleted,
+      estimatedSessions: draft.estimatedSessions,
+    );
+    if (!mounted) return;
+    if (created == null) {
+      showVoidSnackBar(context, 'Не удалось создать задачу');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final m = VoidMetrics.of(context);
+
+    return Scaffold(
+      backgroundColor: kVoidBackground,
+      appBar: AppBar(
+        backgroundColor: kVoidBackground,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        leading: IconButton(
+          icon: Icon(
+            Icons.arrow_back_ios_new_rounded,
+            color: Colors.white.withValues(alpha: 0.8),
+            size: 20,
+          ),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: Text(
+          'Проекты',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w400,
+            color: Colors.white.withValues(alpha: 0.95),
+          ),
+        ),
+        centerTitle: true,
+        actions: [
+          IconButton(
+            onPressed: _addProject,
+            tooltip: 'Добавить проект',
+            icon: Icon(
+              Icons.create_new_folder_rounded,
+              color: kVoidAccent.withValues(alpha: 0.9),
+            ),
+          ),
+          IconButton(
+            onPressed: () => unawaited(_addTask()),
+            tooltip: 'Добавить задачу',
+            icon: Icon(
+              Icons.add_task_rounded,
+              color: kVoidAccent.withValues(alpha: 0.9),
+            ),
+          ),
+        ],
+      ),
+      body: Stack(
+        children: [
+          const VoidAmbientGlow(center: Alignment(0, -0.55)),
+          SafeArea(
+            child: ListenableBuilder(
+              listenable: TasksService.instance,
+              builder: (context, _) {
+                final store = TasksService.instance;
+                final projects = store.projects;
+                final unassignedTasks = store.tasksForProject(null);
+                final isEmpty = projects.isEmpty && store.tasks.isEmpty;
+
+                if (store.isLoading && isEmpty) {
+                  return const Center(
+                    child: CircularProgressIndicator(
+                      color: kVoidAccent,
+                      strokeWidth: 2,
+                    ),
+                  );
+                }
+
+                if (isEmpty) {
+                  return Padding(
+                    padding: EdgeInsets.symmetric(horizontal: m.paddingH),
+                    child: Center(
+                      child: Container(
+                        width: double.infinity,
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 20,
+                          vertical: m.isCompact ? 28 : 36,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.04),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: kVoidAccent.withValues(alpha: 0.2),
+                          ),
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.folder_special_rounded,
+                              size: 40,
+                              color: kVoidAccent.withValues(alpha: 0.6),
+                            ),
+                            const SizedBox(height: 14),
+                            Text(
+                              'Нет проектов и задач',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w400,
+                                color: Colors.white.withValues(alpha: 0.85),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Создайте проект, добавьте задачи и привязывайте к ним фокус-сессии',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 13,
+                                height: 1.4,
+                                color: Colors.white.withValues(alpha: 0.45),
+                              ),
+                            ),
+                            const SizedBox(height: 18),
+                            FilledButton(
+                              onPressed: _addProject,
+                              style: FilledButton.styleFrom(
+                                backgroundColor: kVoidAccent,
+                                foregroundColor: Colors.white,
+                              ),
+                              child: const Text('Создать проект'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                }
+
+                return ListView(
+                  physics: const BouncingScrollPhysics(),
+                  padding: EdgeInsets.fromLTRB(
+                    m.paddingH,
+                    m.gapS,
+                    m.paddingH,
+                    m.gapL,
+                  ),
+                  children: [
+                    for (final project in projects) ...[
+                      VoidProjectListCard(
+                        project: project,
+                        taskCount: store.tasksForProject(project.id).length,
+                        focusSeconds: store.projectFocusSeconds(project.id),
+                        onTap: () => _openProject(project),
+                      ),
+                      SizedBox(height: m.gapM),
+                    ],
+                    if (unassignedTasks.isNotEmpty) ...[
+                      Text(
+                        'Без проекта',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.white.withValues(alpha: 0.45),
+                        ),
+                      ),
+                      SizedBox(height: m.gapS),
+                      ...unassignedTasks.map(
+                        (task) => Padding(
+                          padding: EdgeInsets.only(bottom: m.gapS * 0.5),
+                          child: VoidTaskCard(
+                            task: task,
+                            onToggleComplete: () {
+                              unawaited(
+                                TasksService.instance
+                                    .toggleTaskCompleted(task.id),
+                              );
+                            },
+                            onEdit: () => unawaited(
+                              VoidProjectDetailScreen.editTask(context, task),
+                            ),
+                            onDelete: () => unawaited(
+                              VoidProjectDetailScreen.deleteTask(context, task),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class VoidProjectListCard extends StatelessWidget {
+  const VoidProjectListCard({
+    super.key,
+    required this.project,
+    required this.taskCount,
+    required this.focusSeconds,
+    required this.onTap,
+  });
+
+  final VoidProject project;
+  final int taskCount;
+  final int focusSeconds;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.04),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: project.color.withValues(alpha: 0.35)),
+            boxShadow: [
+              BoxShadow(
+                color: project.color.withValues(alpha: 0.1),
+                blurRadius: 14,
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          project.emoji,
+                          style: const TextStyle(fontSize: 22),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            project.title,
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w500,
+                              color: Colors.white.withValues(alpha: 0.92),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      formatVoidTaskCountLabel(taskCount),
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.white.withValues(alpha: 0.55),
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      formatFocusDuration(focusSeconds),
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: project.color.withValues(alpha: 0.9),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.chevron_right_rounded,
+                color: project.color.withValues(alpha: 0.65),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class VoidProjectDetailScreen extends StatefulWidget {
+  const VoidProjectDetailScreen({
+    super.key,
+    required this.projectId,
+  });
+
+  final String projectId;
+
+  static Future<void> editTask(BuildContext context, VoidTask task) async {
+    final draft = await showVoidTaskEditorDialog(
+      context,
+      initialTitle: task.title,
+      initialDescription: task.description,
+      initialIsCompleted: task.isCompleted,
+      initialEstimatedSessions: task.estimatedSessions,
+      initialProjectId: task.projectId,
+      title: 'Редактировать задачу',
+    );
+    if (draft == null || !context.mounted) return;
+    final success = await TasksService.instance.updateTask(
+      task.copyWith(
+        title: draft.title,
+        description: draft.description,
+        isCompleted: draft.isCompleted,
+        estimatedSessions: draft.estimatedSessions,
+        projectId: draft.projectId,
+        clearProjectId: draft.projectId == null,
+      ),
+    );
+    if (!context.mounted) return;
+    if (!success) {
+      showVoidSnackBar(context, 'Не удалось сохранить задачу');
+    }
+  }
+
+  static Future<void> deleteTask(BuildContext context, VoidTask task) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF12121A),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: kVoidAccent.withValues(alpha: 0.3)),
+        ),
+        title: Text(
+          'Удалить задачу?',
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.95),
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        content: Text(
+          '«${task.title}» будет удалена без возможности восстановления.',
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.65),
+            height: 1.4,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(
+              'Отмена',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.55)),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text(
+              'Удалить',
+              style: TextStyle(color: Color(0xFFF87171)),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    final success = await TasksService.instance.deleteTask(task.id);
+    if (!context.mounted) return;
+    if (!success) {
+      showVoidSnackBar(context, 'Не удалось удалить задачу');
+    }
+  }
+
+  @override
+  State<VoidProjectDetailScreen> createState() =>
+      _VoidProjectDetailScreenState();
+}
+
+class _VoidProjectDetailScreenState extends State<VoidProjectDetailScreen> {
+  @override
+  void initState() {
+    super.initState();
+    TasksService.instance.scheduleLoad(force: true);
+  }
+
+  Future<void> _addTask(VoidProject project) async {
+    final draft = await showVoidTaskEditorDialog(
+      context,
+      initialProjectId: project.id,
+    );
+    if (draft == null || !mounted) return;
+    final created = await TasksService.instance.addTask(
+      draft.title,
+      projectId: draft.projectId ?? project.id,
+      description: draft.description,
+      isCompleted: draft.isCompleted,
+      estimatedSessions: draft.estimatedSessions,
+    );
+    if (!mounted) return;
+    if (created == null) {
+      showVoidSnackBar(context, 'Не удалось создать задачу');
+    }
+  }
+
+  Future<void> _editProject(VoidProject project) async {
+    final draft = await showVoidProjectEditorDialog(
+      context,
+      initialTitle: project.title,
+      initialColorValue: project.colorValue,
+      initialIconName: project.iconName,
+      title: 'Редактировать проект',
+    );
+    if (draft == null || !mounted) return;
+    final success = await TasksService.instance.updateProject(
+      project.copyWith(
+        title: draft.title,
+        colorValue: draft.colorValue,
+        iconName: draft.iconName,
+      ),
+    );
+    if (!mounted) return;
+    if (!success) {
+      showVoidSnackBar(context, 'Не удалось сохранить проект');
+    }
+  }
+
+  Future<void> _deleteProject(VoidProject project) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF12121A),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: kVoidAccent.withValues(alpha: 0.3)),
+        ),
+        title: Text(
+          'Удалить проект?',
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.95),
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        content: Text(
+          '«${project.title}» будет удалён. Задачи останутся без проекта.',
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.65),
+            height: 1.4,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(
+              'Отмена',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.55)),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text(
+              'Удалить',
+              style: TextStyle(color: Color(0xFFF87171)),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final success = await TasksService.instance.deleteProject(project.id);
+    if (!mounted) return;
+    if (!success) {
+      showVoidSnackBar(context, 'Не удалось удалить проект');
+      return;
+    }
+    Navigator.pop(context);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final m = VoidMetrics.of(context);
+
+    return Scaffold(
+      backgroundColor: kVoidBackground,
+      appBar: AppBar(
+        backgroundColor: kVoidBackground,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        leading: IconButton(
+          icon: Icon(
+            Icons.arrow_back_ios_new_rounded,
+            color: Colors.white.withValues(alpha: 0.8),
+            size: 20,
+          ),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: ListenableBuilder(
+          listenable: TasksService.instance,
+          builder: (context, _) {
+            final project =
+                TasksService.instance.projectById(widget.projectId);
+            if (project == null) {
+              return Text(
+                'Проект',
+                style: TextStyle(
+                  fontSize: 18,
+                  color: Colors.white.withValues(alpha: 0.95),
+                ),
+              );
+            }
+            return Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(project.emoji, style: const TextStyle(fontSize: 20)),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    project.title,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w400,
+                      color: Colors.white.withValues(alpha: 0.95),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+        centerTitle: true,
+        actions: [
+          ListenableBuilder(
+            listenable: TasksService.instance,
+            builder: (context, _) {
+              final project =
+                  TasksService.instance.projectById(widget.projectId);
+              if (project == null) return const SizedBox.shrink();
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    onPressed: () => unawaited(_editProject(project)),
+                    icon: Icon(
+                      Icons.edit_outlined,
+                      color: Colors.white.withValues(alpha: 0.55),
+                      size: 20,
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => unawaited(_deleteProject(project)),
+                    icon: Icon(
+                      Icons.delete_outline_rounded,
+                      color: Colors.white.withValues(alpha: 0.45),
+                      size: 20,
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+      floatingActionButton: ListenableBuilder(
+        listenable: TasksService.instance,
+        builder: (context, _) {
+          final project = TasksService.instance.projectById(widget.projectId);
+          if (project == null) return const SizedBox.shrink();
+          return FloatingActionButton(
+            onPressed: () => unawaited(_addTask(project)),
+            backgroundColor: kVoidAccent,
+            child: const Icon(Icons.add_rounded, color: Colors.white),
+          );
+        },
+      ),
+      body: Stack(
+        children: [
+          const VoidAmbientGlow(center: Alignment(0, -0.55)),
+          SafeArea(
+            child: ListenableBuilder(
+              listenable: TasksService.instance,
+              builder: (context, _) {
+                final store = TasksService.instance;
+                final project = store.projectById(widget.projectId);
+                if (project == null) {
+                  return Center(
+                    child: Text(
+                      'Проект не найден',
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.45),
+                      ),
+                    ),
+                  );
+                }
+
+                final tasks = store.tasksForProject(project.id);
+                final focusSeconds = store.projectFocusSeconds(project.id);
+
+                return ListView(
+                  physics: const BouncingScrollPhysics(),
+                  padding: EdgeInsets.fromLTRB(
+                    m.paddingH,
+                    m.gapM,
+                    m.paddingH,
+                    m.gapXL + 72,
+                  ),
+                  children: [
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: project.color.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: project.color.withValues(alpha: 0.25),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            formatVoidTaskCountLabel(tasks.length),
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.white.withValues(alpha: 0.7),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            formatFocusDuration(focusSeconds),
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w500,
+                              color: project.color.withValues(alpha: 0.95),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    SizedBox(height: m.gapL),
+                    if (tasks.isEmpty)
+                      Center(
+                        child: Padding(
+                          padding: EdgeInsets.symmetric(vertical: m.gapL),
+                          child: Text(
+                            'Нет задач в проекте',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.white.withValues(alpha: 0.4),
+                            ),
+                          ),
+                        ),
+                      )
+                    else
+                      ...tasks.map(
+                        (task) => Padding(
+                          padding: EdgeInsets.only(bottom: m.gapS),
+                          child: VoidTaskCard(
+                            task: task,
+                            accent: project.color,
+                            onToggleComplete: () {
+                              unawaited(
+                                TasksService.instance
+                                    .toggleTaskCompleted(task.id),
+                              );
+                            },
+                            onEdit: () => unawaited(
+                              VoidProjectDetailScreen.editTask(context, task),
+                            ),
+                            onDelete: () => unawaited(
+                              VoidProjectDetailScreen.deleteTask(context, task),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class VoidTaskCard extends StatelessWidget {
+  const VoidTaskCard({
+    super.key,
+    required this.task,
+    required this.onToggleComplete,
+    required this.onEdit,
+    required this.onDelete,
+    this.projectTitle,
+    this.accent,
+  });
+
+  final VoidTask task;
+  final VoidCallback onToggleComplete;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+  final String? projectTitle;
+  final Color? accent;
+
+  @override
+  Widget build(BuildContext context) {
+    final progressAccent = accent ?? kVoidAccent;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: task.isCompleted
+              ? kVoidGoalComplete.withValues(alpha: 0.35)
+              : progressAccent.withValues(alpha: 0.18),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              InkWell(
+                onTap: onToggleComplete,
+                borderRadius: BorderRadius.circular(20),
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 2, right: 10),
+                  child: Icon(
+                    task.isCompleted
+                        ? Icons.check_circle_rounded
+                        : Icons.radio_button_unchecked_rounded,
+                    size: 22,
+                    color: task.isCompleted
+                        ? kVoidGoalComplete
+                        : Colors.white.withValues(alpha: 0.35),
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      task.title,
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w500,
+                        decoration: task.isCompleted
+                            ? TextDecoration.lineThrough
+                            : null,
+                        color: task.isCompleted
+                            ? Colors.white.withValues(alpha: 0.45)
+                            : Colors.white.withValues(alpha: 0.92),
+                      ),
+                    ),
+                    if (task.description.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        task.description,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.white.withValues(alpha: 0.45),
+                          height: 1.35,
+                        ),
+                      ),
+                    ],
+                    if (projectTitle != null) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        projectTitle!,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.white.withValues(alpha: 0.38),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: task.isCompleted
+                                ? kVoidGoalComplete.withValues(alpha: 0.12)
+                                : kVoidAccent.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            task.statusLabel,
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: task.isCompleted
+                                  ? kVoidGoalComplete
+                                  : kVoidAccent.withValues(alpha: 0.85),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                onPressed: onEdit,
+                icon: Icon(
+                  Icons.edit_outlined,
+                  size: 18,
+                  color: Colors.white.withValues(alpha: 0.45),
+                ),
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              ),
+              IconButton(
+                onPressed: onDelete,
+                icon: Icon(
+                  Icons.delete_outline_rounded,
+                  size: 18,
+                  color: Colors.white.withValues(alpha: 0.35),
+                ),
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          VoidTaskSessionProgressSection(
+            task: task,
+            accent: task.isCompleted ? kVoidGoalComplete : progressAccent,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class VoidCalendarAccessCard extends StatelessWidget {
   const VoidCalendarAccessCard({
     super.key,
@@ -3070,6 +8807,189 @@ class VoidCalendarAccessCard extends StatelessWidget {
   }
 }
 
+class VoidWeeklyReviewAccessCard extends StatelessWidget {
+  const VoidWeeklyReviewAccessCard({
+    super.key,
+    required this.reviewData,
+    required this.onTap,
+  });
+
+  final VoidWeeklyReviewData reviewData;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final stats = reviewData.currentWeek;
+    final subtitle = stats.sessionsCount == 0
+        ? formatWeeklyReviewPeriod(stats.weekBounds)
+        : '${stats.sessionsCount} ${_sessionsLabel(stats.sessionsCount)} · '
+            '${formatFocusDuration(stats.totalFocusSeconds)}';
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Ink(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.04),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: kVoidAccent.withValues(alpha: 0.25)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: kVoidAccent.withValues(alpha: 0.16),
+                  border: Border.all(color: kVoidAccent.withValues(alpha: 0.35)),
+                ),
+                child: Icon(
+                  Icons.insights_rounded,
+                  size: 20,
+                  color: kVoidAccent.withValues(alpha: 0.9),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Недельный обзор',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.white.withValues(alpha: 0.92),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.white.withValues(alpha: 0.45),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.chevron_right_rounded,
+                color: kVoidAccent.withValues(alpha: 0.75),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  static String _sessionsLabel(int count) {
+    final mod10 = count % 10;
+    final mod100 = count % 100;
+    if (mod100 >= 11 && mod100 <= 14) return 'сессий';
+    if (mod10 == 1) return 'сессия';
+    if (mod10 >= 2 && mod10 <= 4) return 'сессии';
+    return 'сессий';
+  }
+}
+
+class VoidProductivityInsightsAccessCard extends StatelessWidget {
+  const VoidProductivityInsightsAccessCard({
+    super.key,
+    required this.insights,
+    required this.onTap,
+  });
+
+  final VoidProductivityInsights insights;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final subtitle = insights.hasData
+        ? '${insights.sessionsCount} ${_sessionsLabel(insights.sessionsCount)} · '
+            '${formatFocusDuration(insights.averageSessionDurationSeconds)} в среднем'
+        : 'Завершите сессии для инсайтов';
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Ink(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.04),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: kVoidAccent.withValues(alpha: 0.25)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: kVoidAccent.withValues(alpha: 0.16),
+                  border: Border.all(color: kVoidAccent.withValues(alpha: 0.35)),
+                ),
+                child: Icon(
+                  Icons.psychology_rounded,
+                  size: 20,
+                  color: kVoidAccent.withValues(alpha: 0.9),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Инсайты продуктивности',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.white.withValues(alpha: 0.92),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.white.withValues(alpha: 0.45),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.chevron_right_rounded,
+                color: kVoidAccent.withValues(alpha: 0.75),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  static String _sessionsLabel(int count) {
+    final mod10 = count % 10;
+    final mod100 = count % 100;
+    if (mod100 >= 11 && mod100 <= 14) return 'сессий';
+    if (mod10 == 1) return 'сессия';
+    if (mod10 >= 2 && mod10 <= 4) return 'сессии';
+    return 'сессий';
+  }
+}
+
 class VoidSettingsAccessCard extends StatelessWidget {
   const VoidSettingsAccessCard({super.key, required this.onTap});
 
@@ -3121,7 +9041,7 @@ class VoidSettingsAccessCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Данные, экспорт и информация',
+                      'Данные, резервное копирование и информация',
                       style: TextStyle(
                         fontSize: 11,
                         color: Colors.white.withValues(alpha: 0.45),
@@ -3137,6 +9057,392 @@ class VoidSettingsAccessCard extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class VoidBackupRestoreScreen extends StatefulWidget {
+  const VoidBackupRestoreScreen({super.key});
+
+  @override
+  State<VoidBackupRestoreScreen> createState() => _VoidBackupRestoreScreenState();
+}
+
+class _VoidBackupRestoreScreenState extends State<VoidBackupRestoreScreen> {
+  final TextEditingController _importController = TextEditingController();
+  bool _isExporting = false;
+  bool _isImporting = false;
+
+  @override
+  void dispose() {
+    _importController.dispose();
+    super.dispose();
+  }
+
+  void _showSnackBar(String message, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: const Color(0xFF12121A),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(
+            color: (isError ? Colors.redAccent : kVoidAccent)
+                .withValues(alpha: 0.25),
+          ),
+        ),
+        content: Text(
+          message,
+          style: TextStyle(color: Colors.white.withValues(alpha: 0.9)),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _exportBackup() async {
+    if (_isExporting) return;
+    setState(() => _isExporting = true);
+    try {
+      final json = await StatsService.instance.exportBackup();
+      await Clipboard.setData(ClipboardData(text: json));
+      _showSnackBar('Резервная копия скопирована в буфер обмена');
+    } catch (_) {
+      _showSnackBar('Не удалось экспортировать данные', isError: true);
+    } finally {
+      if (mounted) setState(() => _isExporting = false);
+    }
+  }
+
+  Future<void> _pasteFromClipboard() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text?.trim();
+    if (text == null || text.isEmpty) {
+      _showSnackBar('Буфер обмена пуст', isError: true);
+      return;
+    }
+    _importController.text = text;
+    _importController.selection = TextSelection.collapsed(offset: text.length);
+  }
+
+  Future<void> _confirmImport() async {
+    final raw = _importController.text.trim();
+    if (raw.isEmpty) {
+      _showSnackBar('Вставьте JSON резервной копии', isError: true);
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF12121A),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: kVoidAccent.withValues(alpha: 0.3)),
+        ),
+        title: Text(
+          'Восстановить данные?',
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.95),
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        content: Text(
+          'Текущая статистика, сессии, достижения, задачи и проекты '
+          'будут заменены данными из резервной копии.',
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.65),
+            height: 1.4,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(
+              'Отмена',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.55)),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text(
+              'Восстановить',
+              style: TextStyle(color: kVoidAccent),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _isImporting = true);
+    try {
+      final result = await StatsService.instance.importBackup(raw);
+      if (!mounted) return;
+      if (result.success) {
+        _showSnackBar(
+          'Восстановлено: ${result.sessionsCount} сессий, '
+          '${result.projectsCount} проектов, ${result.tasksCount} задач',
+        );
+        _importController.clear();
+      } else {
+        _showSnackBar(
+          result.error ?? 'Не удалось восстановить данные',
+          isError: true,
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isImporting = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final m = VoidMetrics.of(context);
+
+    return Scaffold(
+      backgroundColor: kVoidBackground,
+      appBar: AppBar(
+        backgroundColor: kVoidBackground,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        leading: IconButton(
+          icon: Icon(
+            Icons.arrow_back_ios_new_rounded,
+            color: Colors.white.withValues(alpha: 0.8),
+            size: 20,
+          ),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: Text(
+          'Резервное копирование',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w400,
+            color: Colors.white.withValues(alpha: 0.95),
+          ),
+        ),
+        centerTitle: true,
+      ),
+      body: Stack(
+        children: [
+          const VoidAmbientGlow(center: Alignment(0, -0.55)),
+          SafeArea(
+            child: ListView(
+              physics: const BouncingScrollPhysics(),
+              padding: EdgeInsets.fromLTRB(
+                m.paddingH,
+                m.gapS,
+                m.paddingH,
+                m.gapL,
+              ),
+              children: [
+                Text(
+                  'Сохраните или восстановите все данные VOID в формате JSON.',
+                  style: TextStyle(
+                    fontSize: 13,
+                    height: 1.45,
+                    color: Colors.white.withValues(alpha: 0.45),
+                  ),
+                ),
+                SizedBox(height: m.gapL),
+                const VoidSettingsSectionHeader(title: 'Включает'),
+                SizedBox(height: m.gapS),
+                const _VoidBackupIncludesCard(),
+                SizedBox(height: m.gapL),
+                const VoidSettingsSectionHeader(title: 'Экспорт'),
+                SizedBox(height: m.gapS),
+                VoidSettingsOptionTile(
+                  icon: Icons.file_upload_outlined,
+                  title: _isExporting ? 'Экспорт...' : 'Экспортировать JSON',
+                  subtitle: 'Скопировать резервную копию в буфер обмена',
+                  onTap: _isExporting ? () {} : _exportBackup,
+                ),
+                SizedBox(height: m.gapL),
+                const VoidSettingsSectionHeader(title: 'Импорт'),
+                SizedBox(height: m.gapS),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.04),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: kVoidAccent.withValues(alpha: 0.18),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        'JSON резервной копии',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.white.withValues(alpha: 0.45),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: _importController,
+                        minLines: 6,
+                        maxLines: 10,
+                        style: TextStyle(
+                          fontSize: 12,
+                          height: 1.4,
+                          color: Colors.white.withValues(alpha: 0.85),
+                          fontFamily: 'monospace',
+                        ),
+                        decoration: InputDecoration(
+                          hintText: 'Вставьте JSON...',
+                          hintStyle: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.25),
+                          ),
+                          filled: true,
+                          fillColor: Colors.white.withValues(alpha: 0.03),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(
+                              color: kVoidAccent.withValues(alpha: 0.2),
+                            ),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(
+                              color: kVoidAccent.withValues(alpha: 0.2),
+                            ),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(
+                              color: kVoidAccent.withValues(alpha: 0.45),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: _isImporting ? null : _pasteFromClipboard,
+                              icon: Icon(
+                                Icons.content_paste_rounded,
+                                size: 18,
+                                color: kVoidAccent.withValues(alpha: 0.85),
+                              ),
+                              label: Text(
+                                'Вставить',
+                                style: TextStyle(
+                                  color: kVoidAccent.withValues(alpha: 0.9),
+                                ),
+                              ),
+                              style: OutlinedButton.styleFrom(
+                                side: BorderSide(
+                                  color: kVoidAccent.withValues(alpha: 0.35),
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: FilledButton.icon(
+                              onPressed: _isImporting ? null : _confirmImport,
+                              icon: _isImporting
+                                  ? SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Colors.white.withValues(alpha: 0.9),
+                                      ),
+                                    )
+                                  : Icon(
+                                      Icons.restore_rounded,
+                                      size: 18,
+                                      color: Colors.white.withValues(alpha: 0.95),
+                                    ),
+                              label: Text(
+                                _isImporting ? 'Импорт...' : 'Восстановить',
+                                style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.95),
+                                ),
+                              ),
+                              style: FilledButton.styleFrom(
+                                backgroundColor:
+                                    kVoidAccent.withValues(alpha: 0.85),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _VoidBackupIncludesCard extends StatelessWidget {
+  const _VoidBackupIncludesCard();
+
+  static const _items = [
+    'Статистика',
+    'Сессии',
+    'Достижения',
+    'Задачи',
+    'Проекты',
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: kVoidAccent.withValues(alpha: 0.18)),
+      ),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: _items
+            .map(
+              (label) => Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: kVoidAccent.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: kVoidAccent.withValues(alpha: 0.28),
+                  ),
+                ),
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: kVoidAccent.withValues(alpha: 0.9),
+                  ),
+                ),
+              ),
+            )
+            .toList(),
       ),
     );
   }
@@ -3209,45 +9515,6 @@ class VoidSettingsScreen extends StatelessWidget {
         ),
         content: Text(
           success ? successMessage : 'Не удалось выполнить действие',
-          style: TextStyle(color: Colors.white.withValues(alpha: 0.9)),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _exportData(BuildContext context) async {
-    final json = await StatsService.instance.exportData();
-    try {
-      await Clipboard.setData(ClipboardData(text: json));
-    } catch (_) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: const Color(0xFF12121A),
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-            side: BorderSide(color: kVoidAccent.withValues(alpha: 0.25)),
-          ),
-          content: Text(
-            'Не удалось скопировать данные',
-            style: TextStyle(color: Colors.white.withValues(alpha: 0.9)),
-          ),
-        ),
-      );
-      return;
-    }
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: const Color(0xFF12121A),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-          side: BorderSide(color: kVoidAccent.withValues(alpha: 0.25)),
-        ),
-        content: Text(
-          'Данные скопированы в буфер обмена',
           style: TextStyle(color: Colors.white.withValues(alpha: 0.9)),
         ),
       ),
@@ -3376,6 +9643,24 @@ class VoidSettingsScreen extends StatelessWidget {
                 physics: const BouncingScrollPhysics(),
                 padding: EdgeInsets.only(top: m.gapS, bottom: m.gapL),
                 children: [
+                  const VoidSettingsSectionHeader(title: 'Уведомления'),
+                  SizedBox(height: m.gapS),
+                  const VoidNotificationsSettingsSection(),
+                  SizedBox(height: m.gapL),
+                  const VoidSettingsSectionHeader(title: 'Данные'),
+                  SizedBox(height: m.gapS),
+                  VoidSettingsOptionTile(
+                    icon: Icons.backup_rounded,
+                    title: 'Резервное копирование',
+                    subtitle: 'Экспорт и восстановление JSON',
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute<void>(
+                        builder: (_) => const VoidBackupRestoreScreen(),
+                      ),
+                    ),
+                  ),
+                  SizedBox(height: m.gapS),
                   VoidSettingsOptionTile(
                     icon: Icons.restart_alt_rounded,
                     title: 'Сбросить статистику',
@@ -3406,13 +9691,6 @@ class VoidSettingsScreen extends StatelessWidget {
                       onConfirm: StatsService.instance.clearSessionHistory,
                       successMessage: 'История сессий очищена',
                     ),
-                  ),
-                  SizedBox(height: m.gapS),
-                  VoidSettingsOptionTile(
-                    icon: Icons.upload_rounded,
-                    title: 'Экспорт данных',
-                    subtitle: 'Скопировать статистику в буфер обмена (JSON)',
-                    onTap: () => _exportData(context),
                   ),
                   SizedBox(height: m.gapL),
                   const VoidSettingsSectionHeader(title: 'Обратная связь'),
@@ -3450,6 +9728,154 @@ class VoidSettingsScreen extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class VoidNotificationsSettingsSection extends StatefulWidget {
+  const VoidNotificationsSettingsSection({super.key});
+
+  @override
+  State<VoidNotificationsSettingsSection> createState() =>
+      _VoidNotificationsSettingsSectionState();
+}
+
+class _VoidNotificationsSettingsSectionState
+    extends State<VoidNotificationsSettingsSection> {
+  @override
+  void initState() {
+    super.initState();
+    unawaited(VoidNotificationService.instance.loadPrefs());
+  }
+
+  Future<void> _pickReminderTime() async {
+    final service = VoidNotificationService.instance;
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay(hour: service.hour, minute: service.minute),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.dark(
+              primary: kVoidAccent,
+              surface: Color(0xFF12121A),
+              onSurface: Colors.white,
+            ),
+            dialogTheme: const DialogThemeData(
+              backgroundColor: Color(0xFF12121A),
+            ),
+          ),
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
+    );
+    if (picked == null) return;
+    await service.setReminderTime(
+      newHour: picked.hour,
+      newMinute: picked.minute,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final m = VoidMetrics.of(context);
+
+    return ListenableBuilder(
+      listenable: VoidNotificationService.instance,
+      builder: (context, _) {
+        final service = VoidNotificationService.instance;
+        final timeLabel = formatNotificationTime(service.hour, service.minute);
+
+        return Column(
+          children: [
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: () => service.setEnabled(!service.enabled),
+                borderRadius: BorderRadius.circular(14),
+                child: Ink(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 16,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.04),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: service.enabled
+                          ? kVoidAccent.withValues(alpha: 0.28)
+                          : kVoidAccent.withValues(alpha: 0.18),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: kVoidAccent.withValues(alpha: 0.12),
+                          border: Border.all(
+                            color: kVoidAccent.withValues(alpha: 0.28),
+                          ),
+                        ),
+                        child: Icon(
+                          Icons.notifications_active_outlined,
+                          size: 20,
+                          color: kVoidAccent.withValues(alpha: 0.85),
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Умные напоминания',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                                color: Colors.white.withValues(alpha: 0.92),
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              service.enabled
+                                  ? 'Пора сфокусироваться · серия под угрозой'
+                                  : 'Напоминания отключены',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.white.withValues(alpha: 0.45),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Switch.adaptive(
+                        value: service.enabled,
+                        onChanged: service.setEnabled,
+                        activeThumbColor: kVoidAccent,
+                        activeTrackColor: kVoidAccent.withValues(alpha: 0.45),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            if (service.enabled) ...[
+              SizedBox(height: m.gapS),
+              VoidSettingsOptionTile(
+                icon: Icons.schedule_rounded,
+                title: 'Время напоминания',
+                subtitle:
+                    '$timeLabel · если сегодня не было фокус-сессии',
+                onTap: _pickReminderTime,
+              ),
+            ],
+          ],
+        );
+      },
     );
   }
 }
@@ -3555,6 +9981,386 @@ class VoidSettingsOptionTile extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class VoidWeeklyReviewScreen extends StatefulWidget {
+  const VoidWeeklyReviewScreen({super.key});
+
+  @override
+  State<VoidWeeklyReviewScreen> createState() => _VoidWeeklyReviewScreenState();
+}
+
+class _VoidWeeklyReviewScreenState extends State<VoidWeeklyReviewScreen> {
+  @override
+  void initState() {
+    super.initState();
+    StatsService.instance.scheduleLoad(force: true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final m = VoidMetrics.of(context);
+
+    return Scaffold(
+      backgroundColor: kVoidBackground,
+      appBar: AppBar(
+        backgroundColor: kVoidBackground,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        leading: IconButton(
+          icon: Icon(
+            Icons.arrow_back_ios_new_rounded,
+            color: Colors.white.withValues(alpha: 0.8),
+            size: 20,
+          ),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: Text(
+          'Недельный обзор',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w400,
+            color: Colors.white.withValues(alpha: 0.95),
+          ),
+        ),
+        centerTitle: true,
+      ),
+      body: Stack(
+        children: [
+          const VoidAmbientGlow(center: Alignment(0, -0.55)),
+          SafeArea(
+            child: ListenableBuilder(
+              listenable: StatsService.instance,
+              builder: (context, _) {
+                final store = StatsService.instance;
+
+                if (store.isLoading && !store.hasData) {
+                  return const Center(
+                    child: CircularProgressIndicator(
+                      color: kVoidAccent,
+                      strokeWidth: 2,
+                    ),
+                  );
+                }
+
+                final review = buildWeeklyReviewData(
+                  sessionHistory: store.data.sessionHistory,
+                );
+                final stats = review.currentWeek;
+
+                return SingleChildScrollView(
+                  physics: const BouncingScrollPhysics(),
+                  padding: EdgeInsets.fromLTRB(
+                    m.paddingH,
+                    m.gapS,
+                    m.paddingH,
+                    m.gapL,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        formatWeeklyReviewPeriod(stats.weekBounds),
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.white.withValues(alpha: 0.45),
+                        ),
+                      ),
+                      SizedBox(height: m.gapM),
+                      Container(
+                        width: double.infinity,
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 18,
+                          vertical: m.isCompact ? 18 : 22,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.04),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: kVoidAccent.withValues(alpha: 0.4),
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: kVoidAccent.withValues(alpha: 0.14),
+                              blurRadius: 24,
+                            ),
+                          ],
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(
+                              Icons.auto_awesome_rounded,
+                              size: 22,
+                              color: kVoidAccent.withValues(alpha: 0.85),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                review.summary,
+                                style: TextStyle(
+                                  fontSize: m.isCompact ? 15 : 16,
+                                  height: 1.45,
+                                  fontWeight: FontWeight.w300,
+                                  color: Colors.white.withValues(alpha: 0.92),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      SizedBox(height: m.gapL),
+                      VoidStatCard(
+                        label: 'Сессий за неделю',
+                        value: '${stats.sessionsCount}',
+                        prominent: true,
+                      ),
+                      SizedBox(height: m.gapM),
+                      VoidStatCard(
+                        label: 'Время в фокусе',
+                        value: formatFocusDuration(stats.totalFocusSeconds),
+                      ),
+                      SizedBox(height: m.gapM),
+                      VoidStatCard(
+                        label: 'Средний фокус-счёт',
+                        value: stats.sessionsCount == 0
+                            ? '—'
+                            : formatFocusScore(stats.averageFocusScore),
+                      ),
+                      SizedBox(height: m.gapM),
+                      VoidStatCard(
+                        label: 'Всего отвлечений',
+                        value: '${stats.totalDistractions}',
+                      ),
+                      SizedBox(height: m.gapM),
+                      VoidStatCard(
+                        label: 'Лучший день',
+                        value: stats.bestDayLabel,
+                      ),
+                      SizedBox(height: m.gapM),
+                      VoidStatCard(
+                        label: 'Самая длинная сессия',
+                        value: stats.longestSessionSeconds == 0
+                            ? '—'
+                            : formatFocusDuration(stats.longestSessionSeconds),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class VoidProductivityInsightsScreen extends StatefulWidget {
+  const VoidProductivityInsightsScreen({super.key});
+
+  @override
+  State<VoidProductivityInsightsScreen> createState() =>
+      _VoidProductivityInsightsScreenState();
+}
+
+class _VoidProductivityInsightsScreenState
+    extends State<VoidProductivityInsightsScreen> {
+  @override
+  void initState() {
+    super.initState();
+    StatsService.instance.scheduleLoad(force: true);
+    TasksService.instance.scheduleLoad(force: true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final m = VoidMetrics.of(context);
+
+    return Scaffold(
+      backgroundColor: kVoidBackground,
+      appBar: AppBar(
+        backgroundColor: kVoidBackground,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        leading: IconButton(
+          icon: Icon(
+            Icons.arrow_back_ios_new_rounded,
+            color: Colors.white.withValues(alpha: 0.8),
+            size: 20,
+          ),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: Text(
+          'Инсайты продуктивности',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w400,
+            color: Colors.white.withValues(alpha: 0.95),
+          ),
+        ),
+        centerTitle: true,
+      ),
+      body: Stack(
+        children: [
+          const VoidAmbientGlow(center: Alignment(0, -0.55)),
+          SafeArea(
+            child: ListenableBuilder(
+              listenable: Listenable.merge([
+                StatsService.instance,
+                TasksService.instance,
+              ]),
+              builder: (context, _) {
+                final store = StatsService.instance;
+                final tasksStore = TasksService.instance;
+
+                if (store.isLoading && !store.hasData) {
+                  return const Center(
+                    child: CircularProgressIndicator(
+                      color: kVoidAccent,
+                      strokeWidth: 2,
+                    ),
+                  );
+                }
+
+                final insights = buildProductivityInsights(
+                  sessionHistory: store.data.sessionHistory,
+                  tasks: tasksStore.tasks,
+                  projects: tasksStore.projects,
+                );
+
+                if (!insights.hasData) {
+                  return Center(
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(horizontal: m.paddingH),
+                      child: Container(
+                        width: double.infinity,
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 20,
+                          vertical: m.isCompact ? 28 : 36,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.04),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: kVoidAccent.withValues(alpha: 0.2),
+                          ),
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.psychology_outlined,
+                              size: 40,
+                              color: kVoidAccent.withValues(alpha: 0.6),
+                            ),
+                            SizedBox(height: m.gapM),
+                            Text(
+                              'Пока нет данных',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w400,
+                                color: Colors.white.withValues(alpha: 0.9),
+                              ),
+                            ),
+                            SizedBox(height: m.gapS),
+                            Text(
+                              'Завершите фокус-сессии, чтобы увидеть '
+                              'инсайты по проектам и задачам',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 13,
+                                height: 1.45,
+                                color: Colors.white.withValues(alpha: 0.45),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                }
+
+                return SingleChildScrollView(
+                  physics: const BouncingScrollPhysics(),
+                  padding: EdgeInsets.fromLTRB(
+                    m.paddingH,
+                    m.gapS,
+                    m.paddingH,
+                    m.gapL,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${insights.sessionsCount} '
+                        '${_VoidProductivityInsightsScreenState._sessionsLabel(insights.sessionsCount)} '
+                        'проанализировано',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.white.withValues(alpha: 0.45),
+                        ),
+                      ),
+                      SizedBox(height: m.gapL),
+                      VoidStatCard(
+                        label: 'Самый продуктивный проект',
+                        value: insights.mostFocusedProjectLabel,
+                        prominent: true,
+                      ),
+                      SizedBox(height: m.gapM),
+                      VoidStatCard(
+                        label: 'Самая продуктивная задача',
+                        value: insights.mostFocusedTaskLabel,
+                      ),
+                      SizedBox(height: m.gapM),
+                      VoidStatCard(
+                        label: 'Общее время по проектам',
+                        value: insights.totalProjectFocusLabel,
+                      ),
+                      SizedBox(height: m.gapM),
+                      VoidStatCard(
+                        label: 'Средняя длительность сессии',
+                        value: insights.averageSessionDurationLabel,
+                      ),
+                      SizedBox(height: m.gapM),
+                      VoidStatCard(
+                        label: 'Лучший день фокуса',
+                        value: insights.bestFocusDayLabel,
+                      ),
+                      SizedBox(height: m.gapM),
+                      VoidStatCard(
+                        label: 'Лучшая неделя фокуса',
+                        value: insights.bestFocusWeekLabel,
+                      ),
+                      SizedBox(height: m.gapL),
+                      VoidFocusBreakdownListCard(
+                        title: 'Фокус по проектам',
+                        entries: insights.projectBreakdown,
+                      ),
+                      SizedBox(height: m.gapM),
+                      VoidFocusBreakdownListCard(
+                        title: 'Фокус по задачам',
+                        entries: insights.taskBreakdown,
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _sessionsLabel(int count) {
+    final mod10 = count % 10;
+    final mod100 = count % 100;
+    if (mod100 >= 11 && mod100 <= 14) return 'сессий';
+    if (mod10 == 1) return 'сессия';
+    if (mod10 >= 2 && mod10 <= 4) return 'сессии';
+    return 'сессий';
   }
 }
 
@@ -3719,6 +10525,16 @@ class VoidSessionHistoryCard extends StatelessWidget {
               color: Colors.white.withValues(alpha: 0.9),
             ),
           ),
+          if (session.taskTitle != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              session.taskTitle!,
+              style: TextStyle(
+                fontSize: 12,
+                color: kVoidAccent.withValues(alpha: 0.85),
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           Row(
             children: [
@@ -3799,18 +10615,276 @@ class _SessionHistoryMetric extends StatelessWidget {
   }
 }
 
+class VoidFocusModeStatsCard extends StatelessWidget {
+  const VoidFocusModeStatsCard({super.key, required this.stats});
+
+  final VoidFocusModeStats stats;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: kVoidAccent.withValues(alpha: 0.28)),
+        boxShadow: [
+          BoxShadow(
+            color: kVoidAccent.withValues(alpha: 0.08),
+            blurRadius: 14,
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Режимы фокуса',
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.white.withValues(alpha: 0.45),
+            ),
+          ),
+          const SizedBox(height: 14),
+          for (var index = 0; index < stats.entries.length; index++) ...[
+            if (index > 0) const SizedBox(height: 12),
+            _VoidFocusModeStatRow(entry: stats.entries[index]),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _VoidFocusModeStatRow extends StatelessWidget {
+  const _VoidFocusModeStatRow({required this.entry});
+
+  final VoidFocusModeStatEntry entry;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasData = entry.sessions > 0 || entry.focusSeconds > 0;
+    final sessionsLabel = _sessionsLabel(entry.sessions);
+
+    return Row(
+      children: [
+        Container(
+          width: 52,
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          decoration: BoxDecoration(
+            color: hasData
+                ? kVoidAccent.withValues(alpha: 0.14)
+                : Colors.white.withValues(alpha: 0.03),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: hasData
+                  ? kVoidAccent.withValues(alpha: 0.35)
+                  : Colors.white.withValues(alpha: 0.08),
+            ),
+          ),
+          child: Text(
+            '${entry.minutes}м',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: hasData
+                  ? kVoidAccent
+                  : Colors.white.withValues(alpha: 0.45),
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                entry.mode.recommendation,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.white.withValues(alpha: 0.9),
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                hasData
+                    ? '${entry.sessions} $sessionsLabel · '
+                        '${formatFocusDuration(entry.focusSeconds)}'
+                    : 'Пока нет сессий',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: Colors.white.withValues(alpha: 0.45),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  static String _sessionsLabel(int count) {
+    final mod10 = count % 10;
+    final mod100 = count % 100;
+    if (mod100 >= 11 && mod100 <= 14) return 'сессий';
+    if (mod10 == 1) return 'сессия';
+    if (mod10 >= 2 && mod10 <= 4) return 'сессии';
+    return 'сессий';
+  }
+}
+
+class VoidDeepWorkModeSelector extends StatelessWidget {
+  const VoidDeepWorkModeSelector({
+    super.key,
+    required this.selectedMinutes,
+    required this.onSelected,
+    this.enabled = true,
+  });
+
+  final int selectedMinutes;
+  final ValueChanged<int> onSelected;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) {
+    final selectedMode = VoidDeepWorkMode.resolve(selectedMinutes);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Режимы фокуса',
+          style: TextStyle(
+            fontSize: 12,
+            color: Colors.white.withValues(alpha: 0.45),
+          ),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            for (var index = 0; index < VoidDeepWorkMode.options.length; index++) ...[
+              if (index > 0) const SizedBox(width: 8),
+              Expanded(
+                child: _VoidDeepWorkModeOption(
+                  mode: VoidDeepWorkMode.options[index],
+                  selected: VoidDeepWorkMode.options[index].minutes ==
+                      selectedMinutes,
+                  enabled: enabled,
+                  onTap: () =>
+                      onSelected(VoidDeepWorkMode.options[index].minutes),
+                ),
+              ),
+            ],
+          ],
+        ),
+        const SizedBox(height: 10),
+        Text(
+          '${selectedMode.durationLabel} = ${selectedMode.recommendation}',
+          style: TextStyle(
+            fontSize: 12,
+            color: kVoidAccent.withValues(alpha: 0.85),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _VoidDeepWorkModeOption extends StatelessWidget {
+  const _VoidDeepWorkModeOption({
+    required this.mode,
+    required this.selected,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  final VoidDeepWorkMode mode;
+  final bool selected;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: enabled ? onTap : null,
+        borderRadius: BorderRadius.circular(12),
+        child: Ink(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+          decoration: BoxDecoration(
+            color: selected
+                ? kVoidAccent.withValues(alpha: 0.14)
+                : Colors.white.withValues(alpha: 0.04),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: selected
+                  ? kVoidAccent.withValues(alpha: 0.45)
+                  : kVoidAccent.withValues(alpha: 0.15),
+            ),
+            boxShadow: selected
+                ? [
+                    BoxShadow(
+                      color: kVoidAccent.withValues(alpha: 0.12),
+                      blurRadius: 16,
+                    ),
+                  ]
+                : null,
+          ),
+          child: Column(
+            children: [
+              Text(
+                mode.durationLabel,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: selected
+                      ? kVoidAccent
+                      : Colors.white.withValues(alpha: 0.9),
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                mode.recommendation,
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 10,
+                  height: 1.2,
+                  color: Colors.white.withValues(alpha: selected ? 0.7 : 0.42),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class VoidFocusTab extends StatefulWidget {
-  const VoidFocusTab({super.key});
+  const VoidFocusTab({
+    super.key,
+    this.initialTaskSelection,
+    this.onTaskSelectionChanged,
+  });
+
+  final VoidTaskSelection? initialTaskSelection;
+  final ValueChanged<VoidTaskSelection?>? onTaskSelectionChanged;
 
   @override
   State<VoidFocusTab> createState() => _VoidFocusTabState();
 }
 
 class _VoidFocusTabState extends State<VoidFocusTab> {
-  static const int _sessionMinutes = 25;
-  static const int _totalSeconds = _sessionMinutes * 60;
+  int _sessionMinutes = _kDefaultDeepWorkModeMinutes;
+  int _remainingSeconds = _kDefaultDeepWorkModeMinutes * 60;
 
-  int _remainingSeconds = _totalSeconds;
+  int get _totalSeconds => _sessionMinutes * 60;
   int _sessionDistractions = 0;
   int _distractionFeedbackTick = 0;
   int _distractionCooldownSeconds = 0;
@@ -3818,10 +10892,51 @@ class _VoidFocusTabState extends State<VoidFocusTab> {
   bool _isPaused = false;
   bool _isCompleted = false;
   bool _sessionSaved = false;
+  VoidTaskSelection? _taskSelection;
   Timer? _timer;
 
   @override
+  void initState() {
+    super.initState();
+    _taskSelection = widget.initialTaskSelection;
+    _applyDeepWorkMode(StatsService.instance.data.deepWorkModeMinutes);
+    StatsService.instance.addListener(_onStatsChanged);
+  }
+
+  void _onStatsChanged() {
+    if (_isRunning || _isCompleted) return;
+    final minutes = StatsService.instance.data.deepWorkModeMinutes;
+    if (minutes != _sessionMinutes) {
+      setState(() => _applyDeepWorkMode(minutes));
+    }
+  }
+
+  void _applyDeepWorkMode(int minutes) {
+    _sessionMinutes = VoidDeepWorkMode.resolve(minutes).minutes;
+    _remainingSeconds = _totalSeconds;
+  }
+
+  Future<void> _selectDeepWorkMode(int minutes) async {
+    if (_isRunning || _isCompleted) return;
+    if (_sessionMinutes == minutes) return;
+    await StatsService.instance.setDeepWorkModeMinutes(minutes);
+    if (!mounted) return;
+    setState(() => _applyDeepWorkMode(minutes));
+  }
+
+  @override
+  void didUpdateWidget(VoidFocusTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.initialTaskSelection != oldWidget.initialTaskSelection &&
+        !_isRunning &&
+        !_isCompleted) {
+      _taskSelection = widget.initialTaskSelection;
+    }
+  }
+
+  @override
   void dispose() {
+    StatsService.instance.removeListener(_onStatsChanged);
     _timer?.cancel();
     super.dispose();
   }
@@ -3874,15 +10989,24 @@ class _VoidFocusTabState extends State<VoidFocusTab> {
     await StatsService.instance.completeSession(
       focusSeconds: focusSeconds,
       sessionDistractions: distractions,
+      taskId: _taskSelection?.taskId,
+      taskTitle: _taskSelection?.taskTitle,
+      focusModeMinutes: _sessionMinutes,
     );
 
     if (mounted) {
       await _showCompletionDialog(
         elapsedSeconds: elapsedSeconds,
+        focusSeconds: focusSeconds,
         distractions: distractions,
         xp: xp,
         focusScore: computeFocusScore(distractions),
+        taskSelection: _taskSelection,
       );
+    }
+
+    if (mounted && await StatsService.instance.shouldPromptFirstLaunchFeedback()) {
+      await showVoidFirstLaunchFeedbackDialog(context);
     }
   }
 
@@ -3897,8 +11021,26 @@ class _VoidFocusTabState extends State<VoidFocusTab> {
     });
   }
 
-  void _startSession() {
+  Future<void> _ensureTaskSelected() async {
+    if (_taskSelection != null) return;
+    final selection = await showVoidTaskPicker(context);
+    if (selection == null || !mounted) return;
+    setState(() => _taskSelection = selection);
+    widget.onTaskSelectionChanged?.call(selection);
+  }
+
+  Future<void> _changeTaskSelection() async {
     if (_isRunning || _isCompleted) return;
+    final selection = await showVoidTaskPicker(context);
+    if (selection == null || !mounted) return;
+    setState(() => _taskSelection = selection);
+    widget.onTaskSelectionChanged?.call(selection);
+  }
+
+  Future<void> _startSession() async {
+    if (_isRunning || _isCompleted) return;
+    await _ensureTaskSelected();
+    if (_taskSelection == null || !mounted) return;
     HapticFeedback.lightImpact();
     setState(() => _isRunning = true);
     _startTimer();
@@ -3927,66 +11069,29 @@ class _VoidFocusTabState extends State<VoidFocusTab> {
 
   Future<void> _showCompletionDialog({
     required int elapsedSeconds,
+    required int focusSeconds,
     required int distractions,
     required int xp,
     required int focusScore,
+    required VoidTaskSelection? taskSelection,
   }) async {
-    await showDialog<void>(
+    final stats = StatsService.instance.data;
+
+    await showVoidSessionCompleteDialog(
       context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) => AlertDialog(
-        backgroundColor: const Color(0xFF12121A),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-          side: BorderSide(color: kVoidAccent.withValues(alpha: 0.3)),
-        ),
-        title: Text(
-          'Сессия завершена',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: Colors.white.withValues(alpha: 0.95),
-            fontWeight: FontWeight.w500,
-          ),
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _CompletionSummaryRow(
-              label: 'Длительность',
-              value: formatFocusDuration(elapsedSeconds),
-            ),
-            const SizedBox(height: 12),
-            _CompletionSummaryRow(
-              label: 'Отвлечения',
-              value: '$distractions',
-            ),
-            const SizedBox(height: 12),
-            _CompletionSummaryRow(
-              label: 'Получено XP',
-              value: '+$xp',
-              accent: true,
-            ),
-            const SizedBox(height: 12),
-            _CompletionSummaryRow(
-              label: 'Фокус-счёт',
-              value: '$focusScore',
-            ),
-          ],
-        ),
-        actionsAlignment: MainAxisAlignment.center,
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(dialogContext);
-              _resetSession();
-            },
-            child: const Text(
-              'Готово',
-              style: TextStyle(color: kVoidAccent),
-            ),
-          ),
-        ],
+      data: VoidSessionCompleteData(
+        elapsedSeconds: elapsedSeconds,
+        focusScore: focusScore,
+        xpEarned: xp,
+        currentStreak: stats.currentStreak,
+        todayFocusSeconds: stats.todayFocusSeconds,
+        dailyGoalMinutes: stats.dailyGoalMinutes,
+        dailyGoalProgress: stats.dailyGoalProgress,
+        isDailyGoalCompleted: stats.isDailyGoalCompleted,
+        taskSelection: taskSelection,
+        focusSecondsOnTask: focusSeconds,
       ),
+      onDone: _resetSession,
     );
   }
 
@@ -4019,6 +11124,31 @@ class _VoidFocusTabState extends State<VoidFocusTab> {
                   color: Colors.white.withValues(alpha: 0.9),
                 ),
               ),
+              if (!_isRunning && !_isCompleted) ...[
+                SizedBox(height: m.gapM),
+                VoidDeepWorkModeSelector(
+                  selectedMinutes: _sessionMinutes,
+                  onSelected: (minutes) =>
+                      unawaited(_selectDeepWorkMode(minutes)),
+                ),
+                SizedBox(height: m.gapM),
+                _VoidFocusTaskChip(
+                  taskSelection: _taskSelection,
+                  onTap: _changeTaskSelection,
+                ),
+              ] else if (_taskSelection?.hasTask == true) ...[
+                SizedBox(height: m.gapS),
+                Text(
+                  _taskSelection!.taskTitle!,
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Colors.white.withValues(alpha: 0.55),
+                  ),
+                ),
+              ],
               Expanded(
                 child: Center(
                   child: SizedBox(
@@ -4132,8 +11262,9 @@ class _VoidFocusTabState extends State<VoidFocusTab> {
                 children: [
                   Expanded(
                     child: FilledButton(
-                      onPressed:
-                          _isRunning || _isCompleted ? null : _startSession,
+                      onPressed: _isRunning || _isCompleted
+                          ? null
+                          : () => unawaited(_startSession()),
                       style: FilledButton.styleFrom(
                         backgroundColor: kVoidAccent,
                         disabledBackgroundColor:
@@ -4241,6 +11372,66 @@ class _VoidFocusTabState extends State<VoidFocusTab> {
                     ),
                   ),
                 ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _VoidFocusTaskChip extends StatelessWidget {
+  const _VoidFocusTaskChip({
+    required this.taskSelection,
+    required this.onTap,
+  });
+
+  final VoidTaskSelection? taskSelection;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasTask = taskSelection?.hasTask == true;
+    final label = hasTask ? taskSelection!.taskTitle! : 'Задача не выбрана';
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Ink(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.04),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: kVoidAccent.withValues(alpha: 0.22)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                hasTask ? Icons.task_alt_rounded : Icons.playlist_add_check_rounded,
+                size: 16,
+                color: kVoidAccent.withValues(alpha: 0.85),
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.white.withValues(alpha: 0.72),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Icon(
+                Icons.expand_more_rounded,
+                size: 16,
+                color: Colors.white.withValues(alpha: 0.35),
               ),
             ],
           ),
@@ -4536,58 +11727,6 @@ class _SessionStat extends StatelessWidget {
   }
 }
 
-class _CompletionSummaryRow extends StatelessWidget {
-  const _CompletionSummaryRow({
-    required this.label,
-    required this.value,
-    this.accent = false,
-  });
-
-  final String label;
-  final String value;
-  final bool accent;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.04),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: accent
-              ? kVoidAccent.withValues(alpha: 0.35)
-              : Colors.white.withValues(alpha: 0.08),
-        ),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 13,
-                color: Colors.white.withValues(alpha: 0.55),
-              ),
-            ),
-          ),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w500,
-              color: accent
-                  ? kVoidAccent
-                  : Colors.white.withValues(alpha: 0.92),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class VoidAmbientGlow extends StatelessWidget {
   const VoidAmbientGlow({super.key, this.center = const Alignment(0, -0.3)});
 
@@ -4761,6 +11900,199 @@ class VoidAchievementCard extends StatelessWidget {
             ),
         ],
       ),
+    );
+  }
+}
+
+class VoidWeeklyGoalsCard extends StatefulWidget {
+  const VoidWeeklyGoalsCard({
+    super.key,
+    required this.goalsData,
+  });
+
+  final VoidWeeklyGoalsData goalsData;
+
+  @override
+  State<VoidWeeklyGoalsCard> createState() => _VoidWeeklyGoalsCardState();
+}
+
+class _VoidWeeklyGoalsCardState extends State<VoidWeeklyGoalsCard>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _progressController;
+  late Animation<double> _progressAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _progressController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    );
+    _progressAnimation = CurvedAnimation(
+      parent: _progressController,
+      curve: Curves.easeOutCubic,
+    );
+    _progressController.forward();
+  }
+
+  @override
+  void didUpdateWidget(VoidWeeklyGoalsCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.goalsData.completedCount != widget.goalsData.completedCount ||
+        oldWidget.goalsData.goals.length != widget.goalsData.goals.length) {
+      _progressController.forward(from: 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _progressController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final goalsData = widget.goalsData;
+    final completedGoals =
+        goalsData.goals.where((goal) => goal.isCompleted).length;
+
+    return AnimatedBuilder(
+      animation: _progressAnimation,
+      builder: (context, child) {
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.04),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: kVoidAccent.withValues(alpha: 0.24)),
+            boxShadow: [
+              BoxShadow(
+                color: kVoidAccent.withValues(alpha: 0.08),
+                blurRadius: 16,
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    Icons.flag_rounded,
+                    size: 16,
+                    color: kVoidAccent.withValues(alpha: 0.85),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Цели недели',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.white.withValues(alpha: 0.45),
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    '$completedGoals/${goalsData.goals.length}',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      color: kVoidAccent.withValues(alpha: 0.85),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                formatWeeklyReviewPeriod(goalsData.weekBounds),
+                style: TextStyle(
+                  fontSize: 11,
+                  color: Colors.white.withValues(alpha: 0.38),
+                ),
+              ),
+              const SizedBox(height: 14),
+              for (var index = 0; index < goalsData.goals.length; index++) ...[
+                if (index > 0) const SizedBox(height: 12),
+                _VoidWeeklyGoalRow(
+                  goal: goalsData.goals[index],
+                  animationValue: _progressAnimation.value,
+                ),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _VoidWeeklyGoalRow extends StatelessWidget {
+  const _VoidWeeklyGoalRow({
+    required this.goal,
+    required this.animationValue,
+  });
+
+  final VoidWeeklyGoalProgress goal;
+  final double animationValue;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = goal.isCompleted ? kVoidGoalComplete : kVoidAccent;
+    final animatedProgress = (goal.progress * animationValue).clamp(0.0, 1.0);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                goal.title,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: goal.isCompleted
+                      ? kVoidGoalComplete.withValues(alpha: 0.95)
+                      : Colors.white.withValues(alpha: 0.9),
+                ),
+              ),
+            ),
+            if (goal.isRewardClaimed)
+              Icon(
+                Icons.check_circle_rounded,
+                size: 16,
+                color: kVoidGoalComplete.withValues(alpha: 0.9),
+              )
+            else
+              Text(
+                '+${goal.xpReward} XP',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                  color: accent.withValues(alpha: 0.85),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          goal.progressLabel,
+          style: TextStyle(
+            fontSize: 11,
+            color: Colors.white.withValues(alpha: 0.42),
+          ),
+        ),
+        const SizedBox(height: 8),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(6),
+          child: LinearProgressIndicator(
+            value: animatedProgress,
+            minHeight: 6,
+            backgroundColor: Colors.white.withValues(alpha: 0.08),
+            valueColor: AlwaysStoppedAnimation(accent),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -5188,12 +12520,14 @@ class VoidLevelCard extends StatelessWidget {
   const VoidLevelCard({
     super.key,
     required this.level,
+    required this.levelTitle,
     required this.totalXp,
     required this.xpInLevel,
     required this.progress,
   });
 
   final int level;
+  final String levelTitle;
   final int totalXp;
   final int xpInLevel;
   final double progress;
@@ -5239,13 +12573,30 @@ class VoidLevelCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
-          Text(
-            '$level',
-            style: TextStyle(
-              fontSize: 28,
-              fontWeight: FontWeight.w300,
-              color: Colors.white.withValues(alpha: 0.95),
-            ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                '$level',
+                style: TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.w300,
+                  color: Colors.white.withValues(alpha: 0.95),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text(
+                  levelTitle,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: kVoidAccent.withValues(alpha: 0.8),
+                  ),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 14),
           ClipRRect(
@@ -5294,6 +12645,146 @@ class VoidLevelCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class VoidPersonalRecordsCard extends StatelessWidget {
+  const VoidPersonalRecordsCard({
+    super.key,
+    required this.records,
+  });
+
+  final VoidPersonalRecords records;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: kVoidAccent.withValues(alpha: 0.22)),
+        boxShadow: records.hasAnyRecord
+            ? [
+                BoxShadow(
+                  color: kVoidAccent.withValues(alpha: 0.08),
+                  blurRadius: 16,
+                ),
+              ]
+            : null,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: kVoidAccent.withValues(alpha: 0.14),
+                  border: Border.all(color: kVoidAccent.withValues(alpha: 0.3)),
+                ),
+                child: Icon(
+                  Icons.emoji_events_rounded,
+                  size: 18,
+                  color: kVoidAccent.withValues(alpha: 0.9),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Text(
+                'Личные рекорды',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.white.withValues(alpha: 0.92),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          _VoidPersonalRecordRow(
+            label: 'Самая длинная сессия',
+            value: formatPersonalRecordDuration(records.longestSessionSeconds),
+          ),
+          const SizedBox(height: 10),
+          _VoidPersonalRecordRow(
+            label: 'Лучший фокус-счёт',
+            value: formatPersonalRecordScore(records.bestFocusScore),
+            accent: records.bestFocusScore >= 90,
+          ),
+          const SizedBox(height: 10),
+          _VoidPersonalRecordRow(
+            label: 'Сессий за день',
+            value: formatPersonalRecordCount(records.mostSessionsInDay),
+          ),
+          const SizedBox(height: 10),
+          _VoidPersonalRecordRow(
+            label: 'Лучшая серия',
+            value: records.longestStreak > 0
+                ? '${records.longestStreak} ${_streakDaysLabel(records.longestStreak)}'
+                : '—',
+          ),
+          const SizedBox(height: 10),
+          _VoidPersonalRecordRow(
+            label: 'Фокуса за день',
+            value: formatPersonalRecordDuration(
+              records.mostFocusTimeInDaySeconds,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _streakDaysLabel(int count) {
+    final mod10 = count % 10;
+    final mod100 = count % 100;
+    if (mod100 >= 11 && mod100 <= 14) return 'дней';
+    if (mod10 == 1) return 'день';
+    if (mod10 >= 2 && mod10 <= 4) return 'дня';
+    return 'дней';
+  }
+}
+
+class _VoidPersonalRecordRow extends StatelessWidget {
+  const _VoidPersonalRecordRow({
+    required this.label,
+    required this.value,
+    this.accent = false,
+  });
+
+  final String label;
+  final String value;
+  final bool accent;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.white.withValues(alpha: 0.45),
+            ),
+          ),
+        ),
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w400,
+            color: accent
+                ? kVoidAccent
+                : Colors.white.withValues(alpha: 0.92),
+          ),
+        ),
+      ],
     );
   }
 }
